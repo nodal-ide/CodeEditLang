@@ -187,11 +187,24 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
         let stubIndex = PHPStubIndex.shared()
 
         var result: [EditorDiagnostic] = []
+
+        // 1. Syntax errors.
         for range in info.parseErrors {
+            result.append(EditorDiagnostic(range: range, severity: .error, message: "Syntax error"))
+        }
+
+        // 2. Undefined variables.
+        for variable in info.undefinedVariables {
             result.append(
-                EditorDiagnostic(range: range, severity: .error, message: "Syntax error")
+                EditorDiagnostic(
+                    range: variable.range,
+                    severity: .warning,
+                    message: "Undefined variable '$\(variable.name)'"
+                )
             )
         }
+
+        // 3. Undefined classes.
         for reference in info.classReferences where !Self.isPrimitiveType(reference.name) {
             if !isClassDefined(reference.name, info: info, stubIndex: stubIndex) {
                 result.append(
@@ -203,6 +216,31 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
                 )
             }
         }
+
+        // 4. Undefined functions.
+        for call in info.functionCalls where !Self.isPrimitiveType(call.name) {
+            if !isFunctionDefined(call.name, info: info, stubIndex: stubIndex) {
+                result.append(
+                    EditorDiagnostic(
+                        range: call.range,
+                        severity: .warning,
+                        message: "Undefined function '\(call.name)'"
+                    )
+                )
+            }
+        }
+
+        // 5. Unused imports.
+        for unused in info.unusedImports {
+            result.append(
+                EditorDiagnostic(
+                    range: unused.range,
+                    severity: .hint,
+                    message: "Unused import '\(unused.name)'"
+                )
+            )
+        }
+
         return result
     }
 
@@ -215,6 +253,16 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
             index: index,
             stubIndex: stubIndex
         ).isEmpty
+    }
+
+    private func isFunctionDefined(_ name: String, info: PHPFileSymbols, stubIndex: SymbolIndex) -> Bool {
+        if info.symbols.contains(where: { $0.name == name && $0.kind == .function && $0.container == nil }) {
+            return true
+        }
+        if index.symbols(named: name).contains(where: { $0.kind == .function && $0.container == nil }) {
+            return true
+        }
+        return stubIndex.symbols(named: name).contains { $0.kind == .function }
     }
 
     nonisolated static func isPrimitiveType(_ name: String) -> Bool {

@@ -284,6 +284,56 @@ final class PHPCodeModelTests: XCTestCase {
         XCTAssertFalse(PHPProvider.isPrimitiveType("StripeClient"))
     }
 
+    func testUndefinedVariableDetected() {
+        let source = """
+        <?php
+        namespace App;
+
+        function f(): void {
+            $defined = 1;
+            echo $defined;
+            echo $jonxs;
+        }
+        """
+        let info = PHPFileParser.parse(source, fileURL: URL(fileURLWithPath: "/p/f.php"))
+        XCTAssertTrue(info.undefinedVariables.contains { $0.name == "jonxs" })
+        XCTAssertFalse(info.undefinedVariables.contains { $0.name == "defined" })
+    }
+
+    func testClassReferencesFromExtendsAndNew() {
+        let source = """
+        <?php
+        namespace App;
+
+        class Child extends BaseThing {
+            public function f(): void { $x = new MissingThing(); }
+        }
+        """
+        let info = PHPFileParser.parse(source, fileURL: URL(fileURLWithPath: "/p/c.php"))
+        let names = Set(info.classReferences.map(\.name))
+        XCTAssertTrue(names.contains("BaseThing"))
+        XCTAssertTrue(names.contains("MissingThing"))
+    }
+
+    func testFunctionCallsAndUnusedImports() {
+        let source = """
+        <?php
+        namespace App;
+
+        use App\\Models\\User;
+        use App\\Models\\Order;
+
+        function f(): void {
+            undefinedFn();
+            $u = new User();
+        }
+        """
+        let info = PHPFileParser.parse(source, fileURL: URL(fileURLWithPath: "/p/f.php"))
+        XCTAssertTrue(info.functionCalls.contains { $0.name == "undefinedFn" })
+        XCTAssertTrue(info.unusedImports.contains { $0.name == "Order" })
+        XCTAssertFalse(info.unusedImports.contains { $0.name == "User" })
+    }
+
     private func makeSymbol(
         _ name: String,
         namespace: String?,

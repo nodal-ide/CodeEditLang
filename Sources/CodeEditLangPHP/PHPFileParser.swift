@@ -9,8 +9,14 @@ public struct PHPScope: Sendable {
     public let range: NSRange
 }
 
-/// A class name referenced in the file (e.g. `new Foo(`, `extends Bar`).
-public struct PHPClassReference: Sendable {
+/// A name (class, function, method, alias) referenced in the file with its range.
+public struct PHPNameReference: Sendable {
+    public let name: String
+    public let range: NSRange
+}
+
+/// A variable used but never declared in the file.
+public struct PHPVariableReference: Sendable {
     public let name: String
     public let range: NSRange
 }
@@ -29,8 +35,18 @@ public struct PHPFileSymbols {
     public var classTraits: [String: [String]] = [:]
     /// Ranges of tree-sitter `ERROR`/`MISSING` nodes.
     public var parseErrors: [NSRange] = []
-    /// Class names referenced via `new X(...)`.
-    public var classReferences: [PHPClassReference] = []
+    /// Class names referenced (new/extends/implements/type/static access/catch/instanceof).
+    public var classReferences: [PHPNameReference] = []
+    /// Global function calls (bare `foo(...)`).
+    public var functionCalls: [PHPNameReference] = []
+    /// Method calls on `$this`/`self`/`static` (`$this->foo()`).
+    public var thisMethodCalls: [PHPNameReference] = []
+    /// `use` imports (alias name + range).
+    public var imports: [PHPNameReference] = []
+    /// Variables used but never declared in the file.
+    public var undefinedVariables: [PHPVariableReference] = []
+    /// Imported aliases that are never referenced.
+    public var unusedImports: [PHPNameReference] = []
     public var errorCount: Int = 0
 
     public static var empty: PHPFileSymbols { PHPFileSymbols() }
@@ -59,6 +75,7 @@ public enum PHPFileParser {
             var scanner = PHPScanner(source: source as NSString, fileURL: fileURL)
             if let root = tree.rootNode {
                 scanner.scan(root)
+                scanner.analyze(root)
             }
             return scanner.finish()
         } catch {
@@ -78,7 +95,13 @@ private struct PHPScanner {
     var scopes: [PHPScope] = []
     var classTraits: [String: [String]] = [:]
     var parseErrors: [NSRange] = []
-    var classReferences: [PHPClassReference] = []
+    var classReferences: [PHPNameReference] = []
+    var functionCalls: [PHPNameReference] = []
+    var thisMethodCalls: [PHPNameReference] = []
+    var imports: [PHPNameReference] = []
+    var referencedNames: Set<String> = []
+    var declaredVariables: Set<String> = []
+    var variableUsages: [PHPVariableReference] = []
     var errorCount = 0
 
     private var currentClass: String?
@@ -96,16 +119,6 @@ private struct PHPScanner {
         case "ERROR", "MISSING":
             errorCount += 1
             parseErrors.append(node.range)
-            scanChildren(node)
-
-        case "object_creation_expression":
-            if let nameNode = firstNamedChild(node, matching: {
-                $0 == "name" || $0 == "qualified_name" || $0 == "relative_name"
-            }) {
-                classReferences.append(
-                    PHPClassReference(name: normalized(name: text(of: nameNode)), range: nameNode.range)
-                )
-            }
             scanChildren(node)
 
         case "namespace_definition":
@@ -314,11 +327,13 @@ private struct PHPScanner {
         guard let fqName = qualified, !fqName.isEmpty else { return }
 
         var alias: String?
+        var aliasRange: NSRange = clause.range
         for index in 0..<clause.namedChildCount {
             guard let child = clause.namedChild(at: index), child.nodeType == "name" else { continue }
             let candidate = text(of: child)
             if candidate != fqName {
                 alias = candidate
+                aliasRange = child.range
                 break
             }
         }
@@ -326,7 +341,13 @@ private struct PHPScanner {
             for index in 0..<clause.namedChildCount {
                 guard let child = clause.namedChild(at: index) else { continue }
                 if (child.nodeType ?? "").contains("as") {
-                    alias = firstNamedChild(child, ofType: "name").map { text(of: $0) } ?? text(of: child)
+                    if let nameNode = firstNamedChild(child, ofType: "name") {
+                        alias = text(of: nameNode)
+                        aliasRange = nameNode.range
+                    } else {
+                        alias = text(of: child)
+                        aliasRange = child.range
+                    }
                     break
                 }
             }
@@ -334,8 +355,11 @@ private struct PHPScanner {
 
         if let alias {
             aliases[alias] = fqName
+            imports.append(PHPNameReference(name: alias, range: aliasRange))
         } else if let lastComponent = fqName.split(separator: "\\").last {
-            aliases[String(lastComponent)] = fqName
+            let name = String(lastComponent)
+            aliases[name] = fqName
+            imports.append(PHPNameReference(name: name, range: clause.range))
         }
     }
 
@@ -388,7 +412,19 @@ private struct PHPScanner {
     }
 
     mutating func finish() -> PHPFileSymbols {
-        PHPFileSymbols(
+        let superglobals: Set<String> = [
+            "this", "GLOBALS", "_SERVER", "_GET", "_POST", "_FILES", "_COOKIE",
+            "_SESSION", "_REQUEST", "_ENV"
+        ]
+        var seenVariables = Set<String>()
+        let undefined = variableUsages.compactMap { usage -> PHPVariableReference? in
+            guard !declaredVariables.contains(usage.name), !superglobals.contains(usage.name) else { return nil }
+            guard seenVariables.insert("\(usage.name)|\(usage.range.location)").inserted else { return nil }
+            return usage
+        }
+        let unused = imports.filter { !referencedNames.contains($0.name) }
+
+        return PHPFileSymbols(
             namespace: namespace,
             aliases: aliases,
             symbols: symbols,
@@ -397,8 +433,164 @@ private struct PHPScanner {
             classTraits: classTraits,
             parseErrors: parseErrors,
             classReferences: classReferences,
+            functionCalls: functionCalls,
+            thisMethodCalls: thisMethodCalls,
+            imports: imports,
+            undefinedVariables: undefined,
+            unusedImports: unused,
             errorCount: errorCount
         )
+    }
+
+    // MARK: - Analysis (diagnostics support)
+
+    mutating func analyze(_ root: Node) {
+        walk(root, parent: nil, insideUse: false)
+    }
+
+    private mutating func walk(_ node: Node, parent: Node?, insideUse: Bool) {
+        let type = node.nodeType ?? ""
+
+        if type == "namespace_use_declaration" {
+            for index in 0..<node.namedChildCount {
+                if let child = node.namedChild(at: index) {
+                    walk(child, parent: node, insideUse: true)
+                }
+            }
+            return
+        }
+
+        switch type {
+        case "variable_name":
+            recordVariable(node, parent: parent)
+            return
+
+        case "function_call_expression":
+            if let callee = firstNamedChild(node, matching: { $0 == "name" || $0 == "qualified_name" }) {
+                functionCalls.append(
+                    PHPNameReference(name: normalized(name: text(of: callee)), range: callee.range)
+                )
+            }
+
+        case "object_creation_expression":
+            if let nameNode = classNameNode(node) {
+                classReferences.append(
+                    PHPNameReference(name: normalized(name: text(of: nameNode)), range: nameNode.range)
+                )
+            }
+
+        case "base_clause", "class_interface_clause":
+            for index in 0..<node.namedChildCount {
+                guard let child = node.namedChild(at: index) else { continue }
+                if child.nodeType == "name" || child.nodeType == "qualified_name" {
+                    classReferences.append(
+                        PHPNameReference(name: normalized(name: text(of: child)), range: child.range)
+                    )
+                }
+            }
+
+        case "class_constant_access_expression", "scoped_call_expression":
+            if let nameNode = classNameNode(node) {
+                classReferences.append(
+                    PHPNameReference(name: normalized(name: text(of: nameNode)), range: nameNode.range)
+                )
+            }
+
+        case "catch_clause":
+            for index in 0..<node.namedChildCount {
+                guard let child = node.namedChild(at: index) else { continue }
+                if child.nodeType == "name" || child.nodeType == "qualified_name" {
+                    classReferences.append(
+                        PHPNameReference(name: normalized(name: text(of: child)), range: child.range)
+                    )
+                    break
+                }
+            }
+
+        case "member_call_expression":
+            if let object = node.namedChild(at: 0), isThisLike(object),
+               let method = methodNameNode(node) {
+                thisMethodCalls.append(
+                    PHPNameReference(name: text(of: method), range: method.range)
+                )
+            }
+
+        case "name":
+            if !insideUse { referencedNames.insert(text(of: node)) }
+
+        case "qualified_name", "relative_name":
+            if !insideUse, node.namedChildCount > 0,
+               let last = node.namedChild(at: node.namedChildCount - 1) {
+                referencedNames.insert(text(of: last))
+            }
+
+        default:
+            break
+        }
+
+        for index in 0..<node.namedChildCount {
+            if let child = node.namedChild(at: index) {
+                walk(child, parent: node, insideUse: insideUse)
+            }
+        }
+    }
+
+    private mutating func recordVariable(_ node: Node, parent: Node?) {
+        let name = text(of: node).replacingOccurrences(of: "$", with: "")
+        guard !name.isEmpty else { return }
+
+        guard let parent else {
+            variableUsages.append(PHPVariableReference(name: name, range: node.range))
+            return
+        }
+        let parentType = parent.nodeType ?? ""
+        switch parentType {
+        case "simple_parameter", "variadic_parameter", "property_promotion_parameter",
+             "catch_clause", "global_declaration", "static_variable_declaration",
+             "anonymous_function_use_clause", "list_literal":
+            declaredVariables.insert(name)
+
+        case "assignment_expression", "augmented_assignment_expression", "reference_assignment_expression":
+            if parent.range.location == node.range.location {
+                declaredVariables.insert(name)
+            } else {
+                variableUsages.append(PHPVariableReference(name: name, range: node.range))
+            }
+
+        case "foreach_statement":
+            // First named child is the iterated collection; the rest are declarations.
+            if parent.range.location == node.range.location {
+                variableUsages.append(PHPVariableReference(name: name, range: node.range))
+            } else {
+                declaredVariables.insert(name)
+            }
+
+        default:
+            variableUsages.append(PHPVariableReference(name: name, range: node.range))
+        }
+    }
+
+    private func classNameNode(_ node: Node) -> Node? {
+        firstNamedChild(node, matching: {
+            $0 == "name" || $0 == "qualified_name" || $0 == "relative_name"
+        })
+    }
+
+    private func methodNameNode(_ node: Node) -> Node? {
+        guard node.namedChildCount > 1, let method = node.namedChild(at: 1),
+              method.nodeType == "name" else { return nil }
+        return method
+    }
+
+    private func isThisLike(_ node: Node) -> Bool {
+        if node.nodeType == "variable_name" {
+            return text(of: node) == "$this"
+        }
+        if node.nodeType == "name" {
+            let name = text(of: node)
+            return name == "self" || name == "static"
+        }
+        return false
     }
 
     // MARK: - Helpers
