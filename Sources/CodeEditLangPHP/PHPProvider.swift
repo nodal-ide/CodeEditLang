@@ -1,7 +1,6 @@
 import Foundation
 import AppKit
 import SwiftUI
-import os
 import CodeEditSourceEditor
 import CodeEditTextView
 import CodeEditLang
@@ -47,11 +46,6 @@ public struct PHPCompletionItem: CodeSuggestionEntry {
 public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate, CodeSuggestionDelegate, HoverDelegate {
     public let languageID = "php"
 
-    private static let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "CodeEdit",
-        category: "PHP"
-    )
-
     private let currentFileURL: URL
     private let index: SymbolIndex
     private let openLinkHandler: (JumpToDefinitionLink) -> Void
@@ -74,13 +68,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
     ) async -> [JumpToDefinitionLink]? {
         let source = textView.textView.string
         let identifier = (source as NSString).substring(with: range)
-        Self.logger.notice(
-            "definition: range=\(NSStringFromRange(range), privacy: .public) identifier='\(identifier, privacy: .public)'"
-        )
-        guard !identifier.isEmpty else {
-            Self.logger.notice("definition: empty identifier")
-            return nil
-        }
+        guard !identifier.isEmpty else { return nil }
 
         let parsed = PHPFileParser.parse(source, fileURL: currentFileURL)
         let symbols = PHPSymbolResolver.resolve(
@@ -88,10 +76,6 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
             namespace: parsed.namespace,
             aliases: parsed.aliases,
             index: index
-        )
-        Self.logger.notice(
-            // swiftlint:disable:next line_length
-            "definition: ns=\(parsed.namespace ?? "nil", privacy: .public) aliases=\(parsed.aliases, privacy: .public) -> \(symbols.map(\.fullyQualifiedName), privacy: .public)"
         )
         guard !symbols.isEmpty else { return nil }
 
@@ -118,13 +102,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
     public func hoverInfo(forRange range: NSRange, textView: TextViewController) async -> HoverInfo? {
         let source = textView.textView.string
         let identifier = (source as NSString).substring(with: range)
-        Self.logger.notice(
-            "hover: range=\(NSStringFromRange(range), privacy: .public) identifier='\(identifier, privacy: .public)'"
-        )
-        guard !identifier.isEmpty else {
-            Self.logger.notice("hover: empty identifier")
-            return nil
-        }
+        guard !identifier.isEmpty else { return nil }
 
         let parsed = PHPFileParser.parse(source, fileURL: currentFileURL)
         let symbols = PHPSymbolResolver.resolve(
@@ -133,18 +111,12 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
             aliases: parsed.aliases,
             index: index
         )
-        Self.logger.notice("hover: resolved \(symbols.map(\.fullyQualifiedName), privacy: .public)")
-        guard let symbol = symbols.first else {
-            Self.logger.notice("hover: no symbol resolved for '\(identifier, privacy: .public)'")
-            return nil
-        }
+        guard let symbol = symbols.first else { return nil }
 
         var sections: [String] = []
         sections.append("\(symbol.kind.rawValue) \(symbol.fullyQualifiedName)")
         if let documentation = symbol.documentation, !documentation.isEmpty {
             sections.append(documentation)
-        } else {
-            Self.logger.notice("hover: symbol has no docblock")
         }
         return HoverInfo(contents: sections.joined(separator: "\n\n"), range: range)
     }
@@ -190,19 +162,12 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
 
     @MainActor
     private func items(textView: TextViewController, cursorPosition: CursorPosition) -> [PHPCompletionItem] {
-        let source = textView.textView.string
-        let offset = cursorPosition.range.location
-        let result = PHPCompletionEngine.items(
-            source: source,
-            cursorOffset: offset,
+        PHPCompletionEngine.items(
+            source: textView.textView.string,
+            cursorOffset: cursorPosition.range.location,
             fileURL: currentFileURL,
             index: index
         )
-        Self.logger.notice(
-            // swiftlint:disable:next line_length
-            "completion: offset=\(offset, privacy: .public) items=\(result.count, privacy: .public) first=\(result.prefix(8).map(\.label), privacy: .public)"
-        )
-        return result
     }
 
     private static func prefixStart(at location: Int, text: String) -> Int {

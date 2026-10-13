@@ -19,6 +19,8 @@ public struct PHPFileSymbols {
     public var variables: [String] = []
     /// Class-like scopes, for resolving which class the cursor is inside.
     public var scopes: [PHPScope] = []
+    /// Trait names used by each class-like FQN (`class FQN -> [TraitName]`).
+    public var classTraits: [String: [String]] = [:]
     public var errorCount: Int = 0
 
     public static var empty: PHPFileSymbols { PHPFileSymbols() }
@@ -64,6 +66,7 @@ private struct PHPScanner {
     var aliases: [String: String] = [:]
     var symbols: [SymbolInfo] = []
     var scopes: [PHPScope] = []
+    var classTraits: [String: [String]] = [:]
     var errorCount = 0
 
     private var currentClass: String?
@@ -105,6 +108,13 @@ private struct PHPScanner {
 
         case "method_declaration":
             addNamedChildDeclaration(node, kind: .method, container: currentClass)
+            if let nameNode = firstNamedChild(node, ofType: "name"), text(of: nameNode) == "__construct" {
+                scanPromotedProperties(node)
+            }
+            scanChildren(node)
+
+        case "use_declaration":
+            scanTraitUse(node)
             scanChildren(node)
 
         case "property_declaration":
@@ -161,6 +171,7 @@ private struct PHPScanner {
 
     private mutating func scanPropertyDeclaration(_ node: Node) {
         guard let container = currentClass else { return }
+        let type = firstNamedChild(node, ofType: "type").map { text(of: $0) }
         // A property declaration contains one or more `property_element`s, each with a `variable_name`.
         for index in 0..<node.namedChildCount {
             guard let element = node.namedChild(at: index), element.nodeType == "property_element" else { continue }
@@ -175,17 +186,68 @@ private struct PHPScanner {
                     container: container,
                     fileURL: fileURL,
                     nameRange: nameNode.range,
-                    fullRange: element.range
+                    fullRange: element.range,
+                    signature: type
                 )
             )
+        }
+    }
+
+    /// Constructor-promoted properties (`__construct(private Foo $foo)`) become real properties.
+    private mutating func scanPromotedProperties(_ method: Node) {
+        guard let container = currentClass,
+              let parameters = firstNamedChild(method, ofType: "formal_parameters") else { return }
+        for index in 0..<parameters.namedChildCount {
+            guard let parameter = parameters.namedChild(at: index),
+                  parameter.nodeType == "property_promotion_parameter" else { continue }
+            guard let nameNode = firstNamedChild(parameter, ofType: "variable_name") else { continue }
+            let name = text(of: nameNode).replacingOccurrences(of: "$", with: "")
+            guard !name.isEmpty else { continue }
+            let type = firstNamedChild(parameter, ofType: "type").map { text(of: $0) }
+            symbols.append(
+                SymbolInfo(
+                    name: name,
+                    kind: .property,
+                    namespace: namespace,
+                    container: container,
+                    fileURL: fileURL,
+                    nameRange: nameNode.range,
+                    fullRange: parameter.range,
+                    signature: type
+                )
+            )
+        }
+    }
+
+    /// Trait `use` declarations inside a class body.
+    private mutating func scanTraitUse(_ node: Node) {
+        guard let container = currentClass else { return }
+        for index in 0..<node.namedChildCount {
+            guard let child = node.namedChild(at: index) else { continue }
+            let type = child.nodeType ?? ""
+            if type == "name" || type == "qualified_name" || type == "relative_name" {
+                let name = normalized(name: text(of: child))
+                if !name.isEmpty {
+                    classTraits[container, default: []].append(name)
+                }
+            }
         }
     }
 
     private mutating func scanConstDeclaration(_ node: Node) {
         let container = currentClass
         for index in 0..<node.namedChildCount {
-            guard let element = node.namedChild(at: index), element.nodeType == "const_element" else { continue }
-            guard let nameNode = firstNamedChild(element, ofType: "name") else { continue }
+            guard let element = node.namedChild(at: index) else { continue }
+            let type = element.nodeType ?? ""
+            let nameNode: Node?
+            if type == "const_element" {
+                nameNode = firstNamedChild(element, ofType: "name")
+            } else if type == "name" {
+                nameNode = element
+            } else {
+                nameNode = nil
+            }
+            guard let nameNode else { continue }
             let name = text(of: nameNode)
             guard !name.isEmpty else { continue }
             symbols.append(
@@ -284,6 +346,7 @@ private struct PHPScanner {
             symbols: symbols,
             variables: variableNames.sorted(),
             scopes: scopes,
+            classTraits: classTraits,
             errorCount: errorCount
         )
     }

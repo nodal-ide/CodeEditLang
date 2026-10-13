@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import SwiftUI
+import os
 import CodeEditLang
 
 /// Builds context-aware PHP completion items for a cursor position.
@@ -10,6 +11,10 @@ import CodeEditLang
 /// - otherwise offers local variables, the file's own symbols, imported symbols,
 ///   current-namespace symbols, and keywords
 public enum PHPCompletionEngine {
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "CodeEdit",
+        category: "PHPCompletion"
+    )
     public enum Access {
         case none
         case instance
@@ -57,6 +62,10 @@ public enum PHPCompletionEngine {
     ) -> [PHPCompletionItem] {
         let info = fileInfo(for: source, fileURL: fileURL)
         let analysis = analyze(source: source, offset: cursorOffset, fileInfo: info)
+        Self.logger.notice(
+            // swiftlint:disable:next line_length
+            "analysis: prefix='\(analysis.prefix, privacy: .public)' access=\(String(describing: analysis.access), privacy: .public) receiver='\(analysis.receiver ?? "nil", privacy: .public)' contextClass=\(analysis.contextClass ?? "nil", privacy: .public) ns=\(info.namespace ?? "nil", privacy: .public)"
+        )
 
         switch analysis.access {
         case .instance:
@@ -120,19 +129,29 @@ public enum PHPCompletionEngine {
         info: PHPFileSymbols,
         index: SymbolIndex
     ) -> [PHPCompletionItem] {
-        guard let receiver = analysis.receiver, !receiver.isEmpty else { return [] }
+        guard let receiver = analysis.receiver, !receiver.isEmpty else {
+            Self.logger.notice("member: no receiver parsed")
+            return []
+        }
         guard let typeFQN = resolveReceiverType(
             receiver,
             source: source,
             analysis: analysis,
             info: info,
             index: index
-        ) else { return [] }
-
-        var members = index.members(ofType: typeFQN)
-        if members.isEmpty, let classSymbol = index.symbols(fullyQualified: typeFQN).first {
-            members = index.members(ofType: classSymbol.container ?? classSymbol.fullyQualifiedName)
+        ) else {
+            Self.logger.notice(
+                // swiftlint:disable:next line_length
+                "member: unresolved receiver '\(receiver, privacy: .public)' (contextClass=\(analysis.contextClass ?? "nil", privacy: .public))"
+            )
+            return []
         }
+
+        let members = membersForType(typeFQN, info: info, index: index)
+        Self.logger.notice(
+            // swiftlint:disable:next line_length
+            "member: receiver='\(receiver, privacy: .public)' type=\(typeFQN, privacy: .public) members=\(members.count, privacy: .public) \(members.map(\.name), privacy: .public)"
+        )
 
         let prefix = analysis.prefix
         let filtered = prefix.isEmpty
@@ -169,9 +188,60 @@ public enum PHPCompletionEngine {
         }
 
         if trimmed.hasPrefix("$") {
-            return inferVariableType(trimmed, source: source, analysis: analysis, info: info, index: index)
+            let inferred = inferVariableType(trimmed, source: source, analysis: analysis, info: info, index: index)
+            Self.logger.notice("receiver: '\(trimmed, privacy: .public)' -> \(inferred ?? "nil", privacy: .public)")
+            return inferred
         }
-        return resolveClassFQN(trimmed, info: info, index: index)
+
+        // A bare name after `->` is often a property access (`$this->session->`), so try to
+        // resolve its declared type before treating it as a class name.
+        if let context = analysis.contextClass {
+            let contextMembers = membersForType(context, info: info, index: index)
+            if let property = contextMembers.first(where: { $0.name == trimmed && $0.kind == .property }),
+               let type = property.signature, !type.isEmpty {
+                let resolved = resolveClassFQN(stripType(type), info: info, index: index)
+                Self.logger.notice(
+                    // swiftlint:disable:next line_length
+                    "receiver: property '\(trimmed, privacy: .public)' type '\(type, privacy: .public)' -> \(resolved ?? "nil", privacy: .public)"
+                )
+                return resolved
+            }
+        }
+
+        let resolved = resolveClassFQN(trimmed, info: info, index: index)
+        Self.logger.notice("receiver: class/alias '\(trimmed, privacy: .public)' -> \(resolved ?? "nil", privacy: .public)")
+        return resolved
+    }
+
+    /// Members of a type: its own members plus those contributed by used traits.
+    private static func membersForType(
+        _ typeFQN: String,
+        info: PHPFileSymbols,
+        index: SymbolIndex
+    ) -> [SymbolInfo] {
+        var members = index.members(ofType: typeFQN)
+        if members.isEmpty, let classSymbol = index.symbols(fullyQualified: typeFQN).first {
+            let container = classSymbol.container ?? classSymbol.fullyQualifiedName
+            members = index.members(ofType: container)
+        }
+        if let traits = info.classTraits[typeFQN] {
+            for trait in traits {
+                if let traitFQN = resolveClassFQN(trait, info: info, index: index) {
+                    members.append(contentsOf: index.members(ofType: traitFQN))
+                }
+            }
+        }
+        return members
+    }
+
+    /// Reduces a type expression (`?Foo`, `Foo|null`, `Foo|Bar`) to a single class name.
+    private static func stripType(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespaces)
+        while text.hasPrefix("?") { text.removeFirst() }
+        if let first = text.split(separator: "|").first {
+            text = String(first).trimmingCharacters(in: .whitespaces)
+        }
+        return text.lowercased() == "null" ? "" : text
     }
 
     private static func resolveClassFQN(

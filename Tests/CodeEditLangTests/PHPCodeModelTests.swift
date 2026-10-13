@@ -142,6 +142,67 @@ final class PHPCodeModelTests: XCTestCase {
         XCTAssertTrue(items.contains { $0.label == "user" })
     }
 
+    func testParsesPromotedPropertiesTraitsAndConsts() {
+        let source = """
+        <?php
+        namespace App;
+
+        trait ViewHelper {
+            protected function view(): void {}
+        }
+
+        final class Auth {
+            use ViewHelper;
+
+            private const string BACKUP_KEY = 'k';
+
+            public function __construct(private readonly SessionInterface $session) {}
+        }
+        """
+        let url = URL(fileURLWithPath: "/p/Auth.php")
+        let info = PHPFileParser.parse(source, fileURL: url)
+
+        let classMembers = info.symbols.filter { $0.container == "App\\Auth" }
+        XCTAssertTrue(classMembers.contains { $0.name == "session" && $0.kind == .property })
+        XCTAssertTrue(classMembers.contains { $0.name == "BACKUP_KEY" && $0.kind == .constant })
+        XCTAssertEqual(info.classTraits["App\\Auth"], ["ViewHelper"])
+    }
+
+    func testMemberCompletionIncludesTraitAndPromotedMembers() {
+        let source = """
+        <?php
+        namespace App;
+
+        trait ViewHelper {
+            protected function view(): void {}
+        }
+
+        final class Auth {
+            use ViewHelper;
+            private const string VERIFY_KEY = 'v';
+
+            public function __construct(private readonly SessionInterface $session) {}
+
+            public function run(): void {
+                $this->
+            }
+        }
+        """
+        let url = URL(fileURLWithPath: "/p/Auth.php")
+        let info = PHPFileParser.parse(source, fileURL: url)
+        let index = SymbolIndex()
+        info.symbols.forEach { index.add($0) }
+
+        let ns = source as NSString
+        let marker = ns.range(of: "$this->")
+        let offset = marker.location + marker.length
+        let items = PHPCompletionEngine.items(source: source, cursorOffset: offset, fileURL: url, index: index)
+        let labels = Set(items.map(\.label))
+        XCTAssertTrue(labels.contains("view"), "expected trait method, got \(labels)")
+        XCTAssertTrue(labels.contains("session"), "expected promoted property, got \(labels)")
+        XCTAssertTrue(labels.contains("VERIFY_KEY"), "expected class constant, got \(labels)")
+    }
+
     private func makeSymbol(
         _ name: String,
         namespace: String?,
