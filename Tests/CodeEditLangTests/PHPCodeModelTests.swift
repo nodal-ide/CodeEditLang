@@ -74,6 +74,74 @@ final class PHPCodeModelTests: XCTestCase {
         XCTAssertEqual(matches[0].namespace, "App\\Services")
     }
 
+    func testParsesClassMembers() {
+        let source = """
+        <?php
+        namespace App;
+
+        class Foo {
+            private string $bar;
+            public function baz(): void {}
+        }
+        """
+        let url = URL(fileURLWithPath: "/p/Foo.php")
+        let info = PHPFileParser.parse(source, fileURL: url)
+        let members = info.symbols.filter { $0.container != nil }
+        XCTAssertEqual(Set(members.map(\.name)), ["bar", "baz"])
+        XCTAssertTrue(members.allSatisfy { $0.container == "App\\Foo" })
+        let insideClass = (source as NSString).range(of: "private").location
+        XCTAssertEqual(info.classContaining(offset: insideClass), "App\\Foo")
+    }
+
+    func testMemberCompletionForThis() {
+        let source = """
+        <?php
+        namespace App;
+
+        class Foo {
+            private string $bar;
+            public function baz(): void {}
+            public function run(): void {
+                $this->
+            }
+        }
+        """
+        let url = URL(fileURLWithPath: "/p/Foo.php")
+        let info = PHPFileParser.parse(source, fileURL: url)
+        let index = SymbolIndex()
+        info.symbols.forEach { index.add($0) }
+
+        let ns = source as NSString
+        let marker = ns.range(of: "$this->")
+        let offset = marker.location + marker.length
+        let items = PHPCompletionEngine.items(source: source, cursorOffset: offset, fileURL: url, index: index)
+        let labels = Set(items.map(\.label))
+        XCTAssertTrue(labels.contains("bar"), "expected property member, got \(labels)")
+        XCTAssertTrue(labels.contains("baz"), "expected method member, got \(labels)")
+    }
+
+    func testGeneralCompletionIncludesVariable() {
+        let source = """
+        <?php
+        namespace App;
+
+        function run(): void {
+            $user = new User();
+            $us
+        }
+        """
+        let url = URL(fileURLWithPath: "/p/run.php")
+        let info = PHPFileParser.parse(source, fileURL: url)
+        let index = SymbolIndex()
+        info.symbols.forEach { index.add($0) }
+
+        let ns = source as NSString
+        let marker = ns.range(of: "$us", options: .backwards)
+        let offset = marker.location + marker.length
+        let items = PHPCompletionEngine.items(source: source, cursorOffset: offset, fileURL: url, index: index)
+        XCTAssertTrue(items.contains { $0.label == "user" })
+    }
+
     private func makeSymbol(
         _ name: String,
         namespace: String?,

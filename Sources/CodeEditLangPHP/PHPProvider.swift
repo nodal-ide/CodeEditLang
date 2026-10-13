@@ -50,18 +50,6 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
     private let index: SymbolIndex
     private let openLinkHandler: (JumpToDefinitionLink) -> Void
 
-    private static let keywords: [String] = [
-        "abstract", "and", "array", "as", "break", "callable", "case", "catch", "class",
-        "clone", "const", "continue", "declare", "default", "do", "echo", "else", "elseif",
-        "empty", "enddeclare", "endfor", "endforeach", "endif", "endswitch", "endwhile",
-        "enum", "exit", "extends", "final", "finally", "fn", "for", "foreach", "function",
-        "global", "goto", "if", "implements", "include", "include_once", "instanceof",
-        "insteadof", "interface", "isset", "list", "match", "namespace", "new", "or",
-        "print", "private", "protected", "public", "readonly", "require", "require_once",
-        "return", "static", "switch", "throw", "trait", "try", "unset", "use", "var",
-        "while", "xor", "yield"
-    ]
-
     public init(
         fileURL: URL,
         index: SymbolIndex,
@@ -98,8 +86,8 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
                 typeName: symbol.name,
                 sourcePreview: symbol.fullyQualifiedName,
                 documentation: symbol.documentation,
-                image: Self.image(for: symbol.kind),
-                imageColor: Self.imageColor(for: symbol.kind)
+                image: PHPCompletionEngine.image(for: symbol.kind),
+                imageColor: PHPCompletionEngine.imageColor(for: symbol.kind)
             )
         }
     }
@@ -111,15 +99,14 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
     // MARK: - CodeSuggestionDelegate
 
     @MainActor
-    public func completionTriggerCharacters() -> Set<String> { ["\\"] }
+    public func completionTriggerCharacters() -> Set<String> { ["\\", ">", ":"] }
 
     @MainActor
     public func completionSuggestionsRequested(
         textView: TextViewController,
         cursorPosition: CursorPosition
     ) async -> (windowPosition: CursorPosition, items: [CodeSuggestionEntry])? {
-        let prefix = Self.currentPrefix(at: cursorPosition.range.location, text: textView.textView.string)
-        let items = buildCompletionItems(prefix: prefix, currentFileURL: currentFileURL)
+        let items = items(textView: textView, cursorPosition: cursorPosition)
         return items.isEmpty ? nil : (cursorPosition, items)
     }
 
@@ -128,8 +115,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
         textView: TextViewController,
         cursorPosition: CursorPosition
     ) -> [CodeSuggestionEntry]? {
-        let prefix = Self.currentPrefix(at: cursorPosition.range.location, text: textView.textView.string)
-        let items = buildCompletionItems(prefix: prefix, currentFileURL: currentFileURL)
+        let items = items(textView: textView, cursorPosition: cursorPosition)
         return items.isEmpty ? nil : items
     }
 
@@ -141,46 +127,25 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
     ) {
         guard let cursorPosition else { return }
         let location = cursorPosition.range.location
-        let prefix = Self.currentPrefix(at: location, text: textView.textView.string)
+        let prefixStart = Self.prefixStart(at: location, text: textView.textView.string)
         let insertText = (item as? PHPCompletionItem)?.insertText ?? item.label
-        let range = NSRange(location: location - (prefix as NSString).length, length: (prefix as NSString).length)
+        let range = NSRange(location: prefixStart, length: location - prefixStart)
         textView.textView.replaceCharacters(in: range, with: insertText)
     }
 
     // MARK: - Items
 
-    private func buildCompletionItems(prefix: String, currentFileURL: URL) -> [PHPCompletionItem] {
-        let normalized = prefix.replacingOccurrences(of: "\\", with: "")
-        if normalized.isEmpty {
-            return Self.keywords.map { PHPCompletionItem(label: $0) }
-        }
-
-        var items: [PHPCompletionItem] = []
-
-        // Symbol matches (classes, functions, enums, ...).
-        for symbol in index.symbols(prefix: normalized) where !symbol.name.isEmpty {
-            items.append(
-                PHPCompletionItem(
-                    label: symbol.name,
-                    detail: symbol.fullyQualifiedName,
-                    documentation: symbol.documentation,
-                    image: Self.image(for: symbol.kind),
-                    imageColor: Self.imageColor(for: symbol.kind)
-                )
-            )
-        }
-
-        // Keywords matching the prefix.
-        for keyword in Self.keywords where keyword.hasPrefix(normalized) {
-            items.append(PHPCompletionItem(label: keyword, detail: "keyword"))
-        }
-
-        return items
+    @MainActor
+    private func items(textView: TextViewController, cursorPosition: CursorPosition) -> [PHPCompletionItem] {
+        PHPCompletionEngine.items(
+            source: textView.textView.string,
+            cursorOffset: cursorPosition.range.location,
+            fileURL: currentFileURL,
+            index: index
+        )
     }
 
-    // MARK: - Static helpers
-
-    private static func currentPrefix(at location: Int, text: String) -> String {
+    private static func prefixStart(at location: Int, text: String) -> Int {
         let nsText = text as NSString
         var start = min(max(location, 0), nsText.length)
         while start > 0 {
@@ -188,35 +153,13 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
             let isWord: Bool
             if let scalar = UnicodeScalar(char) {
                 isWord = CharacterSet.alphanumerics.contains(scalar)
-                    || scalar == "_" || scalar == "\\"
+                    || scalar == "_" || scalar == "\\" || scalar == "$"
             } else {
                 isWord = false
             }
             guard isWord else { break }
             start -= 1
         }
-        return nsText.substring(with: NSRange(location: start, length: location - start))
-    }
-
-    private static func image(for kind: SymbolKind) -> Image {
-        let name: String
-        switch kind {
-        case .class, .trait, .interface, .enum: name = "cube.box"
-        case .function, .method: name = "function"
-        case .property: name = "p.square"
-        case .constant: name = "number"
-        case .variable: name = "variable"
-        case .namespace: name = "folder"
-        }
-        return Image(systemName: name)
-    }
-
-    private static func imageColor(for kind: SymbolKind) -> Color {
-        switch kind {
-        case .class, .trait, .interface, .enum: return Color(NSColor.systemBlue)
-        case .function, .method: return Color(NSColor.systemPurple)
-        case .property, .variable: return Color(NSColor.systemTeal)
-        case .constant, .namespace: return Color(NSColor.systemOrange)
-        }
+        return start
     }
 }

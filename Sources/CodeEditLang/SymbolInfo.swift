@@ -10,7 +10,10 @@ public struct SymbolInfo: Sendable {
     public let kind: SymbolKind
     /// Fully-qualified namespace path, e.g. `App\Services\Payment`. `nil` for global scope.
     public let namespace: String?
-    /// The namespace-qualified identifier, e.g. `App\Services\Payment\StripeClient`.
+    /// Owning type for members (methods/properties/constants), e.g. `App\Services\Payment`.
+    public let container: String?
+    /// The namespace-qualified identifier, e.g. `App\Services\Payment\StripeClient`
+    /// or `App\Services\Payment::charge` for members.
     public let fullyQualifiedName: String
     public let fileURL: URL
     /// Byte/UTF-16 range of the declaration identifier within the file.
@@ -25,6 +28,7 @@ public struct SymbolInfo: Sendable {
         name: String,
         kind: SymbolKind,
         namespace: String?,
+        container: String? = nil,
         fileURL: URL,
         nameRange: NSRange,
         fullRange: NSRange,
@@ -35,6 +39,7 @@ public struct SymbolInfo: Sendable {
         self.name = name
         self.kind = kind
         self.namespace = namespace
+        self.container = container
         self.fileURL = fileURL
         self.nameRange = nameRange
         self.fullRange = fullRange
@@ -42,7 +47,9 @@ public struct SymbolInfo: Sendable {
         self.documentation = documentation
         self.visibility = visibility
 
-        if let namespace, !namespace.isEmpty {
+        if let container, !container.isEmpty {
+            self.fullyQualifiedName = "\(container)::\(name)"
+        } else if let namespace, !namespace.isEmpty {
             self.fullyQualifiedName = "\(namespace)\\\(name)"
         } else {
             self.fullyQualifiedName = name

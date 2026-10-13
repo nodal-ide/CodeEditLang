@@ -12,6 +12,7 @@ public final class SymbolIndex: @unchecked Sendable {
     private let lock = NSLock()
     private var byName: [String: [SymbolInfo]] = [:]
     private var byFullyQualifiedName: [String: [SymbolInfo]] = [:]
+    private var byContainer: [String: [SymbolInfo]] = [:]
     private var byFile: [URL: [SymbolInfo]] = [:]
     private var symbolCount = 0
     private var accessOrder: [URL] = []
@@ -28,6 +29,9 @@ public final class SymbolIndex: @unchecked Sendable {
 
         byName[symbol.name.lowercased(), default: []].append(symbol)
         byFullyQualifiedName[symbol.fullyQualifiedName.lowercased(), default: []].append(symbol)
+        if let container = symbol.container, !container.isEmpty {
+            byContainer[container.lowercased(), default: []].append(symbol)
+        }
         byFile[symbol.fileURL, default: []].append(symbol)
         symbolCount += 1
         touch(symbol.fileURL)
@@ -48,6 +52,7 @@ public final class SymbolIndex: @unchecked Sendable {
         defer { lock.unlock() }
         byName.removeAll()
         byFullyQualifiedName.removeAll()
+        byContainer.removeAll()
         byFile.removeAll()
         accessOrder.removeAll()
         symbolCount = 0
@@ -90,6 +95,14 @@ public final class SymbolIndex: @unchecked Sendable {
         return byFile[file] ?? []
     }
 
+    /// Members (methods/properties/constants) declared on the given type FQN.
+    public func members(ofType typeName: String) -> [SymbolInfo] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let members = byContainer[typeName.lowercased()] else { return [] }
+        return members.sorted { $0.nameRange.location < $1.nameRange.location }
+    }
+
     // MARK: - Private
 
     private func touch(_ file: URL) {
@@ -107,6 +120,11 @@ public final class SymbolIndex: @unchecked Sendable {
             let fqn = symbol.fullyQualifiedName.lowercased()
             byFullyQualifiedName[fqn]?.removeAll { $0.fileURL == file }
             if byFullyQualifiedName[fqn]?.isEmpty == true { byFullyQualifiedName.removeValue(forKey: fqn) }
+
+            if let container = symbol.container?.lowercased() {
+                byContainer[container]?.removeAll { $0.fileURL == file }
+                if byContainer[container]?.isEmpty == true { byContainer.removeValue(forKey: container) }
+            }
         }
         symbolCount -= symbols.count
         accessOrder.removeAll { $0 == file }

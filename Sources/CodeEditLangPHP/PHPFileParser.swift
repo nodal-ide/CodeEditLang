@@ -3,15 +3,33 @@ import SwiftTreeSitter
 import CodeEditLanguages
 import CodeEditLang
 
+/// A class/interface/trait/enum scope found in a file.
+public struct PHPScope: Sendable {
+    public let fullyQualifiedName: String
+    public let range: NSRange
+}
+
 /// The result of parsing a single PHP file.
 public struct PHPFileSymbols {
     public var namespace: String?
     /// `use` alias -> fully-qualified class name, e.g. `"User"` -> `"App\\Models\\User"`.
     public var aliases: [String: String] = [:]
     public var symbols: [SymbolInfo] = []
+    /// Distinct local variable names (without the leading `$`) found in the file.
+    public var variables: [String] = []
+    /// Class-like scopes, for resolving which class the cursor is inside.
+    public var scopes: [PHPScope] = []
     public var errorCount: Int = 0
 
     public static var empty: PHPFileSymbols { PHPFileSymbols() }
+
+    /// The innermost class-like scope containing the given UTF-16 offset.
+    public func classContaining(offset: Int) -> String? {
+        scopes
+            .filter { $0.range.location <= offset && offset <= $0.range.location + $0.range.length }
+            .min { $0.range.length < $1.range.length }?
+            .fullyQualifiedName
+    }
 }
 
 /// Parses PHP source with the bundled tree-sitter PHP grammar and extracts a lightweight
@@ -45,7 +63,11 @@ private struct PHPScanner {
     var namespace: String?
     var aliases: [String: String] = [:]
     var symbols: [SymbolInfo] = []
+    var scopes: [PHPScope] = []
     var errorCount = 0
+
+    private var currentClass: String?
+    private var variableNames: Set<String> = []
 
     init(source: NSString, fileURL: URL) {
         self.source = source
@@ -60,7 +82,7 @@ private struct PHPScanner {
             errorCount += 1
 
         case "namespace_definition":
-            let hasBody = firstNamedChild(node, ofType: "compound_statement", orWithField: "body") != nil
+            let hasBody = firstNamedChild(node, ofType: "compound_statement") != nil
             if let nameNode = firstNamedChild(node, matching: { $0 == "namespace_name" }) {
                 namespace = normalized(name: text(of: nameNode))
             } else if !hasBody {
@@ -75,19 +97,107 @@ private struct PHPScanner {
             scanUseDeclaration(node)
 
         case "class_declaration", "interface_declaration", "trait_declaration", "enum_declaration":
-            addDeclaration(node, kind: Self.kind(for: type))
-            scanChildren(node)
+            scanClassLike(node, type: type)
 
         case "function_definition":
             addNamedChildDeclaration(node, kind: .function)
             scanChildren(node)
 
+        case "method_declaration":
+            addNamedChildDeclaration(node, kind: .method, container: currentClass)
+            scanChildren(node)
+
+        case "property_declaration":
+            scanPropertyDeclaration(node)
+            scanChildren(node)
+
         case "const_declaration":
-            addNamedChildDeclaration(node, kind: .constant)
+            scanConstDeclaration(node)
+            scanChildren(node)
+
+        case "variable_name":
+            let name = text(of: node).replacingOccurrences(of: "$", with: "")
+            if !name.isEmpty { variableNames.insert(name) }
             scanChildren(node)
 
         default:
             scanChildren(node)
+        }
+    }
+
+    // MARK: - Classes & members
+
+    private mutating func scanClassLike(_ node: Node, type: String) {
+        guard let nameNode = firstNamedChild(node, ofType: "name") else {
+            scanChildren(node)
+            return
+        }
+        let name = text(of: nameNode).trimmingCharacters(in: .whitespacesAndNewlines)
+        let fqn: String
+        if let namespace, !namespace.isEmpty {
+            fqn = "\(namespace)\\\(name)"
+        } else {
+            fqn = name
+        }
+
+        symbols.append(
+            SymbolInfo(
+                name: name,
+                kind: Self.kind(for: type),
+                namespace: namespace,
+                fileURL: fileURL,
+                nameRange: nameNode.range,
+                fullRange: node.range
+            )
+        )
+        scopes.append(PHPScope(fullyQualifiedName: fqn, range: node.range))
+
+        let saved = currentClass
+        currentClass = fqn
+        scanChildren(node)
+        currentClass = saved
+    }
+
+    private mutating func scanPropertyDeclaration(_ node: Node) {
+        guard let container = currentClass else { return }
+        // A property declaration contains one or more `property_element`s, each with a `variable_name`.
+        for index in 0..<node.namedChildCount {
+            guard let element = node.namedChild(at: index), element.nodeType == "property_element" else { continue }
+            guard let nameNode = firstNamedChild(element, ofType: "variable_name") else { continue }
+            let name = text(of: nameNode).replacingOccurrences(of: "$", with: "")
+            guard !name.isEmpty else { continue }
+            symbols.append(
+                SymbolInfo(
+                    name: name,
+                    kind: .property,
+                    namespace: namespace,
+                    container: container,
+                    fileURL: fileURL,
+                    nameRange: nameNode.range,
+                    fullRange: element.range
+                )
+            )
+        }
+    }
+
+    private mutating func scanConstDeclaration(_ node: Node) {
+        let container = currentClass
+        for index in 0..<node.namedChildCount {
+            guard let element = node.namedChild(at: index), element.nodeType == "const_element" else { continue }
+            guard let nameNode = firstNamedChild(element, ofType: "name") else { continue }
+            let name = text(of: nameNode)
+            guard !name.isEmpty else { continue }
+            symbols.append(
+                SymbolInfo(
+                    name: name,
+                    kind: .constant,
+                    namespace: namespace,
+                    container: container,
+                    fileURL: fileURL,
+                    nameRange: nameNode.range,
+                    fullRange: element.range
+                )
+            )
         }
     }
 
@@ -99,8 +209,6 @@ private struct PHPScanner {
             if clause.nodeType == "namespace_use_clause" {
                 registerAlias(from: clause)
             } else {
-                // Prefer a shallow scan for group clauses (`use A\B\{C, D as E};`),
-                // otherwise leave the prefix unhandled for v1.
                 scan(clause)
             }
         }
@@ -119,7 +227,6 @@ private struct PHPScanner {
         guard let fqName = qualified, !fqName.isEmpty else { return }
 
         var alias: String?
-        // Direct `name` sibling that isn't the qualified name itself.
         for index in 0..<clause.namedChildCount {
             guard let child = clause.namedChild(at: index), child.nodeType == "name" else { continue }
             let candidate = text(of: child)
@@ -128,16 +235,11 @@ private struct PHPScanner {
                 break
             }
         }
-        // Older grammar revisions wrap the alias in an `as`/`as_clause` node.
         if alias == nil {
             for index in 0..<clause.namedChildCount {
                 guard let child = clause.namedChild(at: index) else { continue }
                 if (child.nodeType ?? "").contains("as") {
-                    if let nameNode = firstNamedChild(child, ofType: "name") {
-                        alias = text(of: nameNode)
-                    } else {
-                        alias = text(of: child)
-                    }
+                    alias = firstNamedChild(child, ofType: "name").map { text(of: $0) } ?? text(of: child)
                     break
                 }
             }
@@ -152,26 +254,22 @@ private struct PHPScanner {
 
     // MARK: - Declarations
 
-    private mutating func addDeclaration(_ node: Node, kind: SymbolKind) {
+    private mutating func addNamedChildDeclaration(
+        _ node: Node,
+        kind: SymbolKind,
+        container: String? = nil
+    ) {
         guard let nameNode = firstNamedChild(node, ofType: "name") else { return }
-        add(name: text(of: nameNode), kind: kind, node: node)
-    }
-
-    private mutating func addNamedChildDeclaration(_ node: Node, kind: SymbolKind) {
-        guard let nameNode = firstNamedChild(node, ofType: "name") else { return }
-        add(name: text(of: nameNode), kind: kind, node: node)
-    }
-
-    private mutating func add(name: String, kind: SymbolKind, node: Node) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        let name = text(of: nameNode).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
         symbols.append(
             SymbolInfo(
-                name: trimmed,
+                name: name,
                 kind: kind,
                 namespace: namespace,
+                container: container,
                 fileURL: fileURL,
-                nameRange: node.range,
+                nameRange: nameNode.range,
                 fullRange: node.range
             )
         )
@@ -182,6 +280,8 @@ private struct PHPScanner {
             namespace: namespace,
             aliases: aliases,
             symbols: symbols,
+            variables: variableNames.sorted(),
+            scopes: scopes,
             errorCount: errorCount
         )
     }
@@ -215,23 +315,12 @@ private struct PHPScanner {
         return nil
     }
 
-    private func firstNamedChild(
-        _ node: Node,
-        matching predicate: (String) -> Bool
-    ) -> Node? {
+    private func firstNamedChild(_ node: Node, matching predicate: (String) -> Bool) -> Node? {
         for index in 0..<node.namedChildCount {
             guard let child = node.namedChild(at: index), predicate(child.nodeType ?? "") else { continue }
             return child
         }
         return nil
-    }
-
-    private func firstNamedChild(
-        _ node: Node,
-        ofType type: String,
-        orWithField _: String
-    ) -> Node? {
-        firstNamedChild(node, ofType: type)
     }
 }
 
