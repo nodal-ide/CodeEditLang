@@ -1,0 +1,114 @@
+import Foundation
+
+/// An in-process, memory-bounded symbol table for a project.
+///
+/// Thread-safe (independent reads/lazy writes). Holds no file contents — only
+/// small symbol records — and supports eviction per file so large projects stay
+/// light. This is the shared index the native languages write into.
+public final class SymbolIndex: @unchecked Sendable {
+    /// Upper bound on the number of symbols retained (LRU-approximation by file).
+    public var maxSymbols: Int
+
+    private let lock = NSLock()
+    private var byName: [String: [SymbolInfo]] = [:]
+    private var byFullyQualifiedName: [String: [SymbolInfo]] = [:]
+    private var byFile: [URL: [SymbolInfo]] = [:]
+    private var symbolCount = 0
+    private var accessOrder: [URL] = []
+
+    public init(maxSymbols: Int = 250_000) {
+        self.maxSymbols = maxSymbols
+    }
+
+    // MARK: - Mutation
+
+    public func add(_ symbol: SymbolInfo) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        byName[symbol.name.lowercased(), default: []].append(symbol)
+        byFullyQualifiedName[symbol.fullyQualifiedName.lowercased(), default: []].append(symbol)
+        byFile[symbol.fileURL, default: []].append(symbol)
+        symbolCount += 1
+        touch(symbol.fileURL)
+
+        if symbolCount > maxSymbols, let evicted = accessOrder.first {
+            removeFileLocked(evicted)
+        }
+    }
+
+    public func removeFile(_ file: URL) {
+        lock.lock()
+        defer { lock.unlock() }
+        removeFileLocked(file)
+    }
+
+    public func clear() {
+        lock.lock()
+        defer { lock.unlock() }
+        byName.removeAll()
+        byFullyQualifiedName.removeAll()
+        byFile.removeAll()
+        accessOrder.removeAll()
+        symbolCount = 0
+    }
+
+    // MARK: - Query
+
+    /// All symbols whose short name equals `name` (case-insensitive).
+    public func symbols(named name: String) -> [SymbolInfo] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard var result = byName[name.lowercased()] else { return [] }
+        // Return in a deterministic, stable order.
+        result.sort { a, b in
+            a.fullyQualifiedName == b.fullyQualifiedName
+                ? a.nameRange.location < b.nameRange.location
+                : a.fullyQualifiedName < b.fullyQualifiedName
+        }
+        return result
+    }
+
+    /// All symbols whose fully-qualified name equals `name` (case-insensitive).
+    public func symbols(fullyQualified name: String) -> [SymbolInfo] {
+        lock.lock()
+        defer { lock.unlock() }
+        return byFullyQualifiedName[name.lowercased()] ?? []
+    }
+
+    /// All symbols whose short name starts with `prefix` (case-insensitive), capped at `limit`.
+    public func symbols(prefix: String, limit: Int = 200) -> [SymbolInfo] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !prefix.isEmpty else { return [] }
+        return byName[prefix.lowercased()]?.prefix(limit).map { $0 } ?? []
+    }
+
+    public func symbols(inFile file: URL) -> [SymbolInfo] {
+        lock.lock()
+        defer { lock.unlock() }
+        return byFile[file] ?? []
+    }
+
+    // MARK: - Private
+
+    private func touch(_ file: URL) {
+        accessOrder.removeAll { $0 == file }
+        accessOrder.append(file)
+    }
+
+    private func removeFileLocked(_ file: URL) {
+        guard let symbols = byFile.removeValue(forKey: file) else { return }
+        for symbol in symbols {
+            let key = symbol.name.lowercased()
+            byName[key]?.removeAll { $0.fileURL == file }
+            if byName[key]?.isEmpty == true { byName.removeValue(forKey: key) }
+
+            let fqn = symbol.fullyQualifiedName.lowercased()
+            byFullyQualifiedName[fqn]?.removeAll { $0.fileURL == file }
+            if byFullyQualifiedName[fqn]?.isEmpty == true { byFullyQualifiedName.removeValue(forKey: fqn) }
+        }
+        symbolCount -= symbols.count
+        accessOrder.removeAll { $0 == file }
+    }
+}
