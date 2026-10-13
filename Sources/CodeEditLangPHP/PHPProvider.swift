@@ -59,6 +59,11 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
         self.currentFileURL = fileURL
         self.index = index
         self.openLinkHandler = openLink
+
+        // Warm the bundled stub index off the main thread so the first completion doesn't hitch.
+        Task.detached(priority: .utility) {
+            _ = PHPStubIndex.shared()
+        }
     }
 
     // MARK: - JumpToDefinitionDelegate
