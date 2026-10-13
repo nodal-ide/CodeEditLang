@@ -86,7 +86,13 @@ public final class SymbolIndex: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard !prefix.isEmpty else { return [] }
-        return byName[prefix.lowercased()]?.prefix(limit).map { $0 } ?? []
+        let lower = prefix.lowercased()
+        var result: [SymbolInfo] = []
+        for (key, values) in byName where key.hasPrefix(lower) {
+            result.append(contentsOf: values)
+            if result.count >= limit { break }
+        }
+        return result
     }
 
     public func symbols(inFile file: URL) -> [SymbolInfo] {

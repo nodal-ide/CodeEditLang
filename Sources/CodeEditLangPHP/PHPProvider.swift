@@ -76,8 +76,9 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
             identifier: identifier,
             namespace: parsed.namespace,
             aliases: parsed.aliases,
-            index: index
-        )
+            index: index,
+            stubIndex: PHPStubIndex.shared()
+        ).filter { !PHPStubIndex.isStub($0) }
         guard !symbols.isEmpty else { return nil }
 
         return symbols.map { symbol in
@@ -110,12 +111,17 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
             identifier: identifier,
             namespace: parsed.namespace,
             aliases: parsed.aliases,
-            index: index
+            index: index,
+            stubIndex: PHPStubIndex.shared()
         )
         guard let symbol = symbols.first else { return nil }
 
         var sections: [String] = []
-        sections.append("\(symbol.kind.rawValue) \(symbol.fullyQualifiedName)")
+        if symbol.kind == .function || symbol.kind == .method {
+            sections.append("\(symbol.kind.rawValue) \(symbol.name)(\(symbol.parameters.joined(separator: ", ")))")
+        } else {
+            sections.append("\(symbol.kind.rawValue) \(symbol.fullyQualifiedName)")
+        }
         if let documentation = symbol.documentation, !documentation.isEmpty {
             sections.append(documentation)
         }
@@ -139,7 +145,8 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
             identifier: callee,
             namespace: parsed.namespace,
             aliases: parsed.aliases,
-            index: index
+            index: index,
+            stubIndex: PHPStubIndex.shared()
         )
         guard let symbol = symbols.first(where: { $0.kind == .method || $0.kind == .function }) ?? symbols.first else {
             return nil
@@ -194,7 +201,8 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
             source: textView.textView.string,
             cursorOffset: cursorPosition.range.location,
             fileURL: currentFileURL,
-            index: index
+            index: index,
+            stubIndex: PHPStubIndex.shared()
         )
     }
 

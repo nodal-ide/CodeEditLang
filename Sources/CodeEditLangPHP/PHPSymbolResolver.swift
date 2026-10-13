@@ -10,7 +10,8 @@ public enum PHPSymbolResolver {
         identifier: String,
         namespace: String?,
         aliases: [String: String],
-        index: SymbolIndex
+        index: SymbolIndex,
+        stubIndex: SymbolIndex? = nil
     ) -> [SymbolInfo] {
         var trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
         while trimmed.hasPrefix("\\") { trimmed.removeFirst() }
@@ -20,12 +21,17 @@ public enum PHPSymbolResolver {
         if let fqn = aliases[trimmed] {
             let matches = index.symbols(fullyQualified: fqn)
             if !matches.isEmpty { return deduped(matches) }
+            if let stubIndex {
+                let stubMatches = stubIndex.symbols(fullyQualified: fqn)
+                if !stubMatches.isEmpty { return deduped(stubMatches) }
+            }
         }
 
         // 2. Explicit fully-qualified name.
         if trimmed.contains("\\") {
-            return deduped(index.symbols(fullyQualified: trimmed)) +
-                deduped(trimmed.components(separatedBy: "\\").last.flatMap { index.symbols(named: $0) } ?? [])
+            let qualified = deduped(index.symbols(fullyQualified: trimmed))
+                + deduped(trimmed.components(separatedBy: "\\").last.flatMap { index.symbols(named: $0) } ?? [])
+            if !qualified.isEmpty { return qualified }
         }
 
         // 3. Current namespace.
@@ -34,8 +40,13 @@ public enum PHPSymbolResolver {
             if !matches.isEmpty { return deduped(matches) }
         }
 
-        // 4. Global / short-name fallback (classes imported with a different name resolve here).
-        return deduped(index.symbols(named: trimmed))
+        // 4. Global / short-name fallback (workspace first).
+        let local = deduped(index.symbols(named: trimmed))
+        if !local.isEmpty { return local }
+        if let stubIndex {
+            return deduped(stubIndex.symbols(named: trimmed))
+        }
+        return []
     }
 
     private static func deduped(_ symbols: [SymbolInfo]) -> [SymbolInfo] {

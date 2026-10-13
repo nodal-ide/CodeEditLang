@@ -31,7 +31,15 @@ let package = Package(
                 "CodeEditSourceEditor",
                 "CodeEditTextView",
                 "CodeEditLanguages",
+            ],
+            resources: [
+                .copy("Resources")
             ]
+        ),
+        // Dev tool: turns the phpstorm-stubs directory into a compact JSON symbol index.
+        .executableTarget(
+            name: "phpstubgen",
+            dependencies: ["CodeEditLang", "CodeEditLangPHP"]
         ),
         .testTarget(
             name: "CodeEditLangTests",

@@ -58,7 +58,8 @@ public enum PHPCompletionEngine {
         source: String,
         cursorOffset: Int,
         fileURL: URL,
-        index: SymbolIndex
+        index: SymbolIndex,
+        stubIndex: SymbolIndex? = nil
     ) -> [PHPCompletionItem] {
         let info = fileInfo(for: source, fileURL: fileURL)
         let analysis = analyze(source: source, offset: cursorOffset, fileInfo: info)
@@ -69,11 +70,17 @@ public enum PHPCompletionEngine {
 
         switch analysis.access {
         case .instance:
-            return memberItems(source: source, staticAccess: false, analysis: analysis, info: info, index: index)
+            return memberItems(
+                source: source, staticAccess: false, analysis: analysis, info: info,
+                index: index, stubIndex: stubIndex
+            )
         case .static:
-            return memberItems(source: source, staticAccess: true, analysis: analysis, info: info, index: index)
+            return memberItems(
+                source: source, staticAccess: true, analysis: analysis, info: info,
+                index: index, stubIndex: stubIndex
+            )
         case .none:
-            return generalItems(analysis: analysis, info: info, index: index)
+            return generalItems(analysis: analysis, info: info, index: index, stubIndex: stubIndex)
         }
     }
 
@@ -127,7 +134,8 @@ public enum PHPCompletionEngine {
         staticAccess: Bool,
         analysis: Analysis,
         info: PHPFileSymbols,
-        index: SymbolIndex
+        index: SymbolIndex,
+        stubIndex: SymbolIndex?
     ) -> [PHPCompletionItem] {
         guard let receiver = analysis.receiver, !receiver.isEmpty else {
             Self.logger.notice("member: no receiver parsed")
@@ -138,7 +146,8 @@ public enum PHPCompletionEngine {
             source: source,
             analysis: analysis,
             info: info,
-            index: index
+            index: index,
+            stubIndex: stubIndex
         ) else {
             Self.logger.notice(
                 // swiftlint:disable:next line_length
@@ -147,7 +156,7 @@ public enum PHPCompletionEngine {
             return []
         }
 
-        let members = membersForType(typeFQN, info: info, index: index)
+        let members = membersForType(typeFQN, info: info, index: index, stubIndex: stubIndex)
         Self.logger.notice(
             "member: receiver='\(receiver, privacy: .public)' type=\(typeFQN, privacy: .public) members=\(members.count, privacy: .public)"
         )
@@ -174,7 +183,8 @@ public enum PHPCompletionEngine {
         source: String,
         analysis: Analysis,
         info: PHPFileSymbols,
-        index: SymbolIndex
+        index: SymbolIndex,
+        stubIndex: SymbolIndex?
     ) -> String? {
         let trimmed = receiver.trimmingCharacters(in: .whitespaces)
         switch trimmed {
@@ -187,7 +197,9 @@ public enum PHPCompletionEngine {
         }
 
         if trimmed.hasPrefix("$") {
-            let inferred = inferVariableType(trimmed, source: source, analysis: analysis, info: info, index: index)
+            let inferred = inferVariableType(
+                trimmed, source: source, analysis: analysis, info: info, index: index, stubIndex: stubIndex
+            )
             Self.logger.notice("receiver: '\(trimmed, privacy: .public)' -> \(inferred ?? "nil", privacy: .public)")
             return inferred
         }
@@ -195,13 +207,13 @@ public enum PHPCompletionEngine {
         // A bare name after `->` is often a property access (`$this->session->`), so try to
         // resolve its declared type before treating it as a class name.
         if let context = analysis.contextClass {
-            let contextMembers = membersForType(context, info: info, index: index)
+            let contextMembers = membersForType(context, info: info, index: index, stubIndex: stubIndex)
             if let property = contextMembers.first(where: { $0.name == trimmed && $0.kind == .property }) {
                 guard let type = property.signature, !type.isEmpty else {
                     Self.logger.notice("receiver: property '\(trimmed, privacy: .public)' has no resolvable type")
                     return nil
                 }
-                let resolved = resolveClassFQN(stripType(type), info: info, index: index)
+                let resolved = resolveClassFQN(stripType(type), info: info, index: index, stubIndex: stubIndex)
                 Self.logger.notice(
                     // swiftlint:disable:next line_length
                     "receiver: property '\(trimmed, privacy: .public)' type '\(type, privacy: .public)' -> \(resolved ?? "nil", privacy: .public)"
@@ -210,25 +222,35 @@ public enum PHPCompletionEngine {
             }
         }
 
-        let resolved = resolveClassFQN(trimmed, info: info, index: index)
+        let resolved = resolveClassFQN(trimmed, info: info, index: index, stubIndex: stubIndex)
         Self.logger.notice("receiver: class/alias '\(trimmed, privacy: .public)' -> \(resolved ?? "nil", privacy: .public)")
         return resolved
     }
 
     /// Members of a type: its own members plus those contributed by used traits.
+    /// Falls back to the bundled stubs when the type isn't in the workspace.
     private static func membersForType(
         _ typeFQN: String,
         info: PHPFileSymbols,
-        index: SymbolIndex
+        index: SymbolIndex,
+        stubIndex: SymbolIndex?
     ) -> [SymbolInfo] {
         var members = index.members(ofType: typeFQN)
         if members.isEmpty, let classSymbol = index.symbols(fullyQualified: typeFQN).first {
             let container = classSymbol.container ?? classSymbol.fullyQualifiedName
             members = index.members(ofType: container)
         }
+
+        if members.isEmpty, let stubIndex {
+            members = stubIndex.members(ofType: typeFQN)
+            if members.isEmpty, let classSymbol = stubIndex.symbols(fullyQualified: typeFQN).first {
+                members = stubIndex.members(ofType: classSymbol.container ?? classSymbol.fullyQualifiedName)
+            }
+        }
+
         if let traits = info.classTraits[typeFQN] {
             for trait in traits {
-                if let traitFQN = resolveClassFQN(trait, info: info, index: index) {
+                if let traitFQN = resolveClassFQN(trait, info: info, index: index, stubIndex: nil) {
                     members.append(contentsOf: index.members(ofType: traitFQN))
                 }
             }
@@ -249,7 +271,8 @@ public enum PHPCompletionEngine {
     private static func resolveClassFQN(
         _ name: String,
         info: PHPFileSymbols,
-        index: SymbolIndex
+        index: SymbolIndex,
+        stubIndex: SymbolIndex?
     ) -> String? {
         if name.hasPrefix("\\") {
             return String(name.dropFirst())
@@ -259,6 +282,7 @@ public enum PHPCompletionEngine {
         }
         if name.contains("\\") {
             if !index.symbols(fullyQualified: name).isEmpty { return name }
+            if let stubIndex, !stubIndex.symbols(fullyQualified: name).isEmpty { return name }
             if let namespace = info.namespace, !namespace.isEmpty { return "\(namespace)\\\(name)" }
             return name
         }
@@ -269,6 +293,13 @@ public enum PHPCompletionEngine {
         if let symbol = index.symbols(named: name).first {
             return symbol.container ?? symbol.fullyQualifiedName
         }
+        // Stub fallback (built-in global functions/classes).
+        if let stubIndex {
+            if !stubIndex.symbols(fullyQualified: name).isEmpty { return name }
+            if let symbol = stubIndex.symbols(named: name).first {
+                return symbol.container ?? symbol.fullyQualifiedName
+            }
+        }
         return name
     }
 
@@ -277,7 +308,8 @@ public enum PHPCompletionEngine {
     private static func generalItems(
         analysis: Analysis,
         info: PHPFileSymbols,
-        index: SymbolIndex
+        index: SymbolIndex,
+        stubIndex: SymbolIndex?
     ) -> [PHPCompletionItem] {
         let prefix = analysis.prefix
         var items: [PHPCompletionItem] = []
@@ -326,6 +358,13 @@ public enum PHPCompletionEngine {
             append(PHPCompletionItem(label: keyword, detail: "keyword"))
         }
 
+        // Bundled stubs (built-in functions/classes/constants) — lowest priority.
+        if let stubIndex, !prefix.isEmpty {
+            for symbol in stubIndex.symbols(prefix: prefix) where symbol.container == nil {
+                append(item(for: symbol))
+            }
+        }
+
         return items
     }
 
@@ -346,7 +385,8 @@ public enum PHPCompletionEngine {
         source: String,
         analysis: Analysis,
         info: PHPFileSymbols,
-        index: SymbolIndex
+        index: SymbolIndex,
+        stubIndex: SymbolIndex?
     ) -> String? {
         let escaped = NSRegularExpression.escapedPattern(for: variable)
         let patterns = [
@@ -363,7 +403,7 @@ public enum PHPCompletionEngine {
                 var typeName = String(source[typeRange])
                 // Take the first type of a union.
                 if let first = typeName.split(separator: "|").first { typeName = String(first) }
-                return resolveClassFQN(typeName, info: info, index: index)
+                return resolveClassFQN(typeName, info: info, index: index, stubIndex: stubIndex)
             }
         }
         return nil

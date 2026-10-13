@@ -219,6 +219,40 @@ final class PHPCodeModelTests: XCTestCase {
         XCTAssertEqual(method?.parameters, ["string $view", "array $data", "?string $layout"])
     }
 
+    func testStubIndexLoadsBuiltins() {
+        let index = PHPStubIndex.shared()
+        let strlen = index.symbols(named: "strlen")
+        XCTAssertFalse(strlen.isEmpty, "expected built-in strlen in stubs")
+        XCTAssertFalse(strlen.first?.parameters.isEmpty ?? true, "expected strlen parameters")
+    }
+
+    func testGeneralCompletionFallsBackToStubs() {
+        let source = """
+        <?php
+        namespace App;
+
+        function run(): void {
+            strl
+        }
+        """
+        let url = URL(fileURLWithPath: "/p/run.php")
+        let info = PHPFileParser.parse(source, fileURL: url)
+        let index = SymbolIndex()
+        info.symbols.forEach { index.add($0) }
+
+        let ns = source as NSString
+        let marker = ns.range(of: "strl", options: .backwards)
+        let offset = marker.location + marker.length
+        let items = PHPCompletionEngine.items(
+            source: source,
+            cursorOffset: offset,
+            fileURL: url,
+            index: index,
+            stubIndex: PHPStubIndex.shared()
+        )
+        XCTAssertTrue(items.contains { $0.label == "strlen" }, "expected stub builtin strlen in completion")
+    }
+
     private func makeSymbol(
         _ name: String,
         namespace: String?,
