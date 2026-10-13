@@ -17,6 +17,10 @@ public final class SymbolIndex: @unchecked Sendable {
     private var symbolCount = 0
     private var accessOrder: [URL] = []
 
+    /// Lazily-maintained sorted list of `byName` keys, for fast prefix queries.
+    private var sortedNames: [String] = []
+    private var namesDirty = true
+
     public init(maxSymbols: Int = 250_000) {
         self.maxSymbols = maxSymbols
     }
@@ -34,6 +38,7 @@ public final class SymbolIndex: @unchecked Sendable {
         }
         byFile[symbol.fileURL, default: []].append(symbol)
         symbolCount += 1
+        namesDirty = true
         touch(symbol.fileURL)
 
         if symbolCount > maxSymbols, let evicted = accessOrder.first {
@@ -55,6 +60,8 @@ public final class SymbolIndex: @unchecked Sendable {
         byContainer.removeAll()
         byFile.removeAll()
         accessOrder.removeAll()
+        sortedNames.removeAll()
+        namesDirty = true
         symbolCount = 0
     }
 
@@ -82,17 +89,45 @@ public final class SymbolIndex: @unchecked Sendable {
     }
 
     /// All symbols whose short name starts with `prefix` (case-insensitive), capped at `limit`.
+    ///
+    /// Uses a lazily-sorted name index + binary search instead of scanning every key, so it
+    /// stays fast even over the ~26k-key stub index.
     public func symbols(prefix: String, limit: Int = 200) -> [SymbolInfo] {
         lock.lock()
         defer { lock.unlock() }
         guard !prefix.isEmpty else { return [] }
         let lower = prefix.lowercased()
+
+        if namesDirty {
+            sortedNames = byName.keys.sorted()
+            namesDirty = false
+        }
+
         var result: [SymbolInfo] = []
-        for (key, values) in byName where key.hasPrefix(lower) {
-            result.append(contentsOf: values)
+        var index = lowerBound(of: lower)
+        while index < sortedNames.count, sortedNames[index].hasPrefix(lower) {
+            if let values = byName[sortedNames[index]] {
+                result.append(contentsOf: values)
+            }
             if result.count >= limit { break }
+            index += 1
         }
         return result
+    }
+
+    /// First index in `sortedNames` whose value is `>= value`.
+    private func lowerBound(of value: String) -> Int {
+        var low = 0
+        var high = sortedNames.count
+        while low < high {
+            let mid = (low + high) / 2
+            if sortedNames[mid] < value {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        return low
     }
 
     public func symbols(inFile file: URL) -> [SymbolInfo] {
@@ -112,6 +147,8 @@ public final class SymbolIndex: @unchecked Sendable {
     // MARK: - Private
 
     private func touch(_ file: URL) {
+        // Fast path: consecutive symbols from the same file (the common case while indexing).
+        if accessOrder.last == file { return }
         accessOrder.removeAll { $0 == file }
         accessOrder.append(file)
     }
@@ -134,5 +171,6 @@ public final class SymbolIndex: @unchecked Sendable {
         }
         symbolCount -= symbols.count
         accessOrder.removeAll { $0 == file }
+        namesDirty = true
     }
 }

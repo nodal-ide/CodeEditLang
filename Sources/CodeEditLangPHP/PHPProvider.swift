@@ -76,7 +76,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
         let identifier = (source as NSString).substring(with: range)
         guard !identifier.isEmpty else { return nil }
 
-        let parsed = PHPFileParser.parse(source, fileURL: currentFileURL)
+        let parsed = await PHPParseCache.shared.infoAsync(for: currentFileURL, source: source)
         let symbols = PHPSymbolResolver.resolve(
             identifier: identifier,
             namespace: parsed.namespace,
@@ -111,7 +111,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
         let identifier = (source as NSString).substring(with: range)
         guard !identifier.isEmpty else { return nil }
 
-        let parsed = PHPFileParser.parse(source, fileURL: currentFileURL)
+        let parsed = await PHPParseCache.shared.infoAsync(for: currentFileURL, source: source)
         let symbols = PHPSymbolResolver.resolve(
             identifier: identifier,
             namespace: parsed.namespace,
@@ -145,7 +145,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
         let callee = (source as NSString).substring(with: calleeRange)
         guard !callee.isEmpty else { return nil }
 
-        let parsed = PHPFileParser.parse(source, fileURL: currentFileURL)
+        let parsed = await PHPParseCache.shared.infoAsync(for: currentFileURL, source: source)
         let symbols = PHPSymbolResolver.resolve(
             identifier: callee,
             namespace: parsed.namespace,
@@ -166,7 +166,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
     @MainActor
     public func documentSymbols(for textView: TextViewController) async -> [EditorSymbol] {
         let source = textView.textView.string
-        let info = PHPFileParser.parse(source, fileURL: currentFileURL)
+        let info = await PHPParseCache.shared.infoAsync(for: currentFileURL, source: source)
         return info.symbols.compactMap { symbol in
             guard symbol.nameRange.length > 0 else { return nil }
             let detail = symbol.container.map { "\($0) — \(symbol.kind.rawValue)" } ?? symbol.kind.rawValue
@@ -183,7 +183,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
     @MainActor
     public func diagnostics(for textView: TextViewController) async -> [EditorDiagnostic] {
         let source = textView.textView.string
-        let info = PHPFileParser.parse(source, fileURL: currentFileURL)
+        let info = await PHPParseCache.shared.infoAsync(for: currentFileURL, source: source)
         let stubIndex = PHPStubIndex.shared()
 
         var result: [EditorDiagnostic] = []
@@ -284,7 +284,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
             return []
         }
 
-        let parsed = PHPFileParser.parse(source, fileURL: currentFileURL)
+        let parsed = await PHPParseCache.shared.infoAsync(for: currentFileURL, source: source)
         // Already imported by this short name.
         if parsed.aliases[identifier] != nil { return [] }
 
@@ -416,14 +416,17 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
 
     @MainActor
     private func items(textView: TextViewController, cursorPosition: CursorPosition) -> [PHPCompletionItem] {
-        PHPCompletionEngine.items(
+        let items = PHPCompletionEngine.items(
             source: textView.textView.string,
             cursorOffset: cursorPosition.range.location,
             fileURL: currentFileURL,
             index: index,
             stubIndex: PHPStubIndex.shared()
         )
+        return items.count > Self.maxItems ? Array(items.prefix(Self.maxItems)) : items
     }
+
+    private static let maxItems = 200
 
     private static func prefixStart(at location: Int, text: String) -> Int {
         let nsText = text as NSString

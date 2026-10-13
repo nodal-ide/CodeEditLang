@@ -31,25 +31,8 @@ public enum PHPCompletionEngine {
 
     // MARK: - Parse cache
 
-    private static let cacheLock = NSLock()
-    private static var parseCache: [Int: (source: String, info: PHPFileSymbols)] = [:]
-
     private static func fileInfo(for source: String, fileURL: URL) -> PHPFileSymbols {
-        let key = source.hashValue
-        cacheLock.lock()
-        if let cached = parseCache[key], cached.source == source {
-            cacheLock.unlock()
-            return cached.info
-        }
-        cacheLock.unlock()
-
-        let info = PHPFileParser.parse(source, fileURL: fileURL)
-
-        cacheLock.lock()
-        if parseCache.count > 16 { parseCache.removeAll() }
-        parseCache[key] = (source, info)
-        cacheLock.unlock()
-        return info
+        PHPParseCache.shared.info(for: fileURL, source: source)
     }
 
     // MARK: - Public
@@ -428,25 +411,35 @@ public enum PHPCompletionEngine {
         "xor", "yield"
     ]
 
+    private static let classImage = Image(systemName: "cube")
+    private static let functionImage = Image(systemName: "function")
+    private static let propertyImage = Image(systemName: "square.on.square")
+    private static let constantImage = Image(systemName: "number")
+    private static let variableImage = Image(systemName: "v.square")
+    private static let namespaceImage = Image(systemName: "folder")
+
+    private static let typeColor = Color(NSColor.systemBlue)
+    private static let callableColor = Color(NSColor.systemPurple)
+    private static let valueColor = Color(NSColor.systemTeal)
+    private static let memberColor = Color(NSColor.systemOrange)
+
     static func image(for kind: SymbolKind) -> Image {
-        let name: String
         switch kind {
-        case .class, .trait, .interface, .enum: name = "cube"
-        case .function, .method: name = "function"
-        case .property: name = "square.on.square"
-        case .constant: name = "number"
-        case .variable: name = "v.square"
-        case .namespace: name = "folder"
+        case .class, .trait, .interface, .enum: return classImage
+        case .function, .method: return functionImage
+        case .property: return propertyImage
+        case .constant: return constantImage
+        case .variable: return variableImage
+        case .namespace: return namespaceImage
         }
-        return Image(systemName: name)
     }
 
     static func imageColor(for kind: SymbolKind) -> Color {
         switch kind {
-        case .class, .trait, .interface, .enum: return Color(NSColor.systemBlue)
-        case .function, .method: return Color(NSColor.systemPurple)
-        case .property, .variable: return Color(NSColor.systemTeal)
-        case .constant, .namespace: return Color(NSColor.systemOrange)
+        case .class, .trait, .interface, .enum: return typeColor
+        case .function, .method: return callableColor
+        case .property, .variable: return valueColor
+        case .constant, .namespace: return memberColor
         }
     }
 }
