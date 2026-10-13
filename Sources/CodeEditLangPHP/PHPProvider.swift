@@ -56,7 +56,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
     private var lastItemsSignature: String?
     private var lastItems: [PHPCompletionItem] = []
 
-    public init(
+    public nonisolated init(
         fileURL: URL,
         index: SymbolIndex,
         openLink: @escaping (JumpToDefinitionLink) -> Void
