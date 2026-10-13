@@ -165,6 +165,7 @@ final class PHPCodeModelTests: XCTestCase {
         let classMembers = info.symbols.filter { $0.container == "App\\Auth" }
         XCTAssertTrue(classMembers.contains { $0.name == "session" && $0.kind == .property })
         XCTAssertTrue(classMembers.contains { $0.name == "BACKUP_KEY" && $0.kind == .constant })
+        XCTAssertEqual(classMembers.first { $0.name == "session" }?.signature, "SessionInterface")
         XCTAssertEqual(info.classTraits["App\\Auth"], ["ViewHelper"])
     }
 

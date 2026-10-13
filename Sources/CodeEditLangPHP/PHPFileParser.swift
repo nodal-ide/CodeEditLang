@@ -171,7 +171,7 @@ private struct PHPScanner {
 
     private mutating func scanPropertyDeclaration(_ node: Node) {
         guard let container = currentClass else { return }
-        let type = firstNamedChild(node, ofType: "type").map { text(of: $0) }
+        let type = typeText(of: node)
         // A property declaration contains one or more `property_element`s, each with a `variable_name`.
         for index in 0..<node.namedChildCount {
             guard let element = node.namedChild(at: index), element.nodeType == "property_element" else { continue }
@@ -203,7 +203,7 @@ private struct PHPScanner {
             guard let nameNode = firstNamedChild(parameter, ofType: "variable_name") else { continue }
             let name = text(of: nameNode).replacingOccurrences(of: "$", with: "")
             guard !name.isEmpty else { continue }
-            let type = firstNamedChild(parameter, ofType: "type").map { text(of: $0) }
+            let type = typeText(of: parameter)
             symbols.append(
                 SymbolInfo(
                     name: name,
@@ -399,6 +399,24 @@ private struct PHPScanner {
         for index in 0..<node.namedChildCount {
             guard let child = node.namedChild(at: index), child.nodeType == type else { continue }
             return child
+        }
+        return nil
+    }
+
+    /// Extracts the declared type text from a parameter or property declaration.
+    ///
+    /// Tree-sitter PHP names the type node differently across grammar revisions
+    /// (`type`, `named_type`, `primitive_type`, `optional_type`, `union_type`, ...),
+    /// so match any direct child whose node type contains "type".
+    private func typeText(of node: Node) -> String? {
+        if let direct = firstNamedChild(node, ofType: "type") {
+            return text(of: direct)
+        }
+        for index in 0..<node.namedChildCount {
+            guard let child = node.namedChild(at: index) else { continue }
+            let type = child.nodeType ?? ""
+            if type == "variable_name" || type.contains("attribute") { continue }
+            if type.contains("type") { return text(of: child) }
         }
         return nil
     }

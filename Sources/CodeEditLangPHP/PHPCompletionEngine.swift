@@ -149,8 +149,7 @@ public enum PHPCompletionEngine {
 
         let members = membersForType(typeFQN, info: info, index: index)
         Self.logger.notice(
-            // swiftlint:disable:next line_length
-            "member: receiver='\(receiver, privacy: .public)' type=\(typeFQN, privacy: .public) members=\(members.count, privacy: .public) \(members.map(\.name), privacy: .public)"
+            "member: receiver='\(receiver, privacy: .public)' type=\(typeFQN, privacy: .public) members=\(members.count, privacy: .public)"
         )
 
         let prefix = analysis.prefix
@@ -197,8 +196,11 @@ public enum PHPCompletionEngine {
         // resolve its declared type before treating it as a class name.
         if let context = analysis.contextClass {
             let contextMembers = membersForType(context, info: info, index: index)
-            if let property = contextMembers.first(where: { $0.name == trimmed && $0.kind == .property }),
-               let type = property.signature, !type.isEmpty {
+            if let property = contextMembers.first(where: { $0.name == trimmed && $0.kind == .property }) {
+                guard let type = property.signature, !type.isEmpty else {
+                    Self.logger.notice("receiver: property '\(trimmed, privacy: .public)' has no resolvable type")
+                    return nil
+                }
                 let resolved = resolveClassFQN(stripType(type), info: info, index: index)
                 Self.logger.notice(
                     // swiftlint:disable:next line_length
@@ -389,11 +391,11 @@ public enum PHPCompletionEngine {
     static func image(for kind: SymbolKind) -> Image {
         let name: String
         switch kind {
-        case .class, .trait, .interface, .enum: name = "cube.box"
+        case .class, .trait, .interface, .enum: name = "cube"
         case .function, .method: name = "function"
-        case .property: name = "p.square"
+        case .property: name = "square.on.square"
         case .constant: name = "number"
-        case .variable: name = "variable"
+        case .variable: name = "v.square"
         case .namespace: name = "folder"
         }
         return Image(systemName: name)
