@@ -116,7 +116,7 @@ private struct PHPScanner {
                 break
             }
         }
-        guard var fqName = qualified, !fqName.isEmpty else { return }
+        guard let fqName = qualified, !fqName.isEmpty else { return }
 
         var alias: String?
         // Direct `name` sibling that isn't the qualified name itself.

@@ -43,7 +43,6 @@ public struct PHPCompletionItem: CodeSuggestionEntry {
 /// One instance is bound to an open file and a project `SymbolIndex`. Cross-file
 /// definition navigation is routed through `openLinkHandler` (supplied by the app, which
 /// owns the editor/document model).
-@MainActor
 public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate, CodeSuggestionDelegate {
     public let languageID = "php"
 
@@ -111,8 +110,10 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
 
     // MARK: - CodeSuggestionDelegate
 
+    @MainActor
     public func completionTriggerCharacters() -> Set<String> { ["\\"] }
 
+    @MainActor
     public func completionSuggestionsRequested(
         textView: TextViewController,
         cursorPosition: CursorPosition
@@ -122,6 +123,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
         return items.isEmpty ? nil : (cursorPosition, items)
     }
 
+    @MainActor
     public func completionOnCursorMove(
         textView: TextViewController,
         cursorPosition: CursorPosition
@@ -131,6 +133,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
         return items.isEmpty ? nil : items
     }
 
+    @MainActor
     public func completionWindowApplyCompletion(
         item: CodeSuggestionEntry,
         textView: TextViewController,
