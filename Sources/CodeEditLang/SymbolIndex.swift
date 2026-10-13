@@ -30,7 +30,19 @@ public final class SymbolIndex: @unchecked Sendable {
     public func add(_ symbol: SymbolInfo) {
         lock.lock()
         defer { lock.unlock() }
+        addLocked(symbol)
+    }
 
+    /// Inserts many symbols under a single lock acquisition (used by bulk indexing).
+    public func add(_ symbols: [SymbolInfo]) {
+        lock.lock()
+        defer { lock.unlock() }
+        for symbol in symbols {
+            addLocked(symbol)
+        }
+    }
+
+    private func addLocked(_ symbol: SymbolInfo) {
         byName[symbol.name.lowercased(), default: []].append(symbol)
         byFullyQualifiedName[symbol.fullyQualifiedName.lowercased(), default: []].append(symbol)
         if let container = symbol.container, !container.isEmpty {
@@ -71,14 +83,7 @@ public final class SymbolIndex: @unchecked Sendable {
     public func symbols(named name: String) -> [SymbolInfo] {
         lock.lock()
         defer { lock.unlock() }
-        guard var result = byName[name.lowercased()] else { return [] }
-        // Return in a deterministic, stable order.
-        result.sort { a, b in
-            a.fullyQualifiedName == b.fullyQualifiedName
-                ? a.nameRange.location < b.nameRange.location
-                : a.fullyQualifiedName < b.fullyQualifiedName
-        }
-        return result
+        return byName[name.lowercased()] ?? []
     }
 
     /// All symbols whose fully-qualified name equals `name` (case-insensitive).

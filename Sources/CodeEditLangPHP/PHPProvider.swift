@@ -51,6 +51,11 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
     private let index: SymbolIndex
     private let openLinkHandler: (JumpToDefinitionLink) -> Void
 
+    /// Coalesces the two completion callbacks that fire per keystroke
+    /// (`completionSuggestionsRequested` + `completionOnCursorMove`).
+    private var lastItemsSignature: String?
+    private var lastItems: [PHPCompletionItem] = []
+
     public init(
         fileURL: URL,
         index: SymbolIndex,
@@ -416,14 +421,23 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
 
     @MainActor
     private func items(textView: TextViewController, cursorPosition: CursorPosition) -> [PHPCompletionItem] {
-        let items = PHPCompletionEngine.items(
-            source: textView.textView.string,
-            cursorOffset: cursorPosition.range.location,
+        let source = textView.textView.string
+        let offset = cursorPosition.range.location
+        let prefixStart = Self.prefixStart(at: offset, text: source)
+        let signature = "\(source.utf16.count):\(offset):\(prefixStart)"
+        if signature == lastItemsSignature { return lastItems }
+
+        let built = PHPCompletionEngine.items(
+            source: source,
+            cursorOffset: offset,
             fileURL: currentFileURL,
             index: index,
             stubIndex: PHPStubIndex.shared()
         )
-        return items.count > Self.maxItems ? Array(items.prefix(Self.maxItems)) : items
+        let capped = built.count > Self.maxItems ? Array(built.prefix(Self.maxItems)) : built
+        lastItemsSignature = signature
+        lastItems = capped
+        return capped
     }
 
     private static let maxItems = 200

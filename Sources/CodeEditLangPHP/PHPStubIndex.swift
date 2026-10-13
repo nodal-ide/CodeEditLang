@@ -22,21 +22,21 @@ public enum PHPStubIndex {
             ?? Bundle.module.url(forResource: "phpstubs", withExtension: "json", subdirectory: "Resources")
         if let url, let data = try? Data(contentsOf: url),
            let entries = try? JSONDecoder().decode([StubEntry].self, from: data) {
-            for entry in entries {
-                index.add(
-                    SymbolInfo(
-                        name: entry.name,
-                        kind: SymbolKind(rawValue: entry.kind) ?? .function,
-                        namespace: entry.namespace,
-                        container: entry.container,
-                        fileURL: stubFileURL,
-                        nameRange: NSRange(location: 0, length: 0),
-                        fullRange: NSRange(location: 0, length: 0),
-                        parameters: entry.parameters,
-                        documentation: entry.documentation
-                    )
+            let symbols = entries.map { entry in
+                SymbolInfo(
+                    name: entry.name,
+                    kind: SymbolKind(rawValue: entry.kind) ?? .function,
+                    namespace: entry.namespace,
+                    container: entry.container,
+                    fileURL: stubFileURL,
+                    nameRange: NSRange(location: 0, length: 0),
+                    fullRange: NSRange(location: 0, length: 0),
+                    parameters: entry.parameters,
+                    documentation: entry.documentation
                 )
             }
+            // Single lock acquisition for the whole bulk.
+            index.add(symbols)
         }
         cached = index
         return index

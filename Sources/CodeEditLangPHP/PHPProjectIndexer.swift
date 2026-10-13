@@ -55,9 +55,7 @@ public final class PHPProjectIndexer: @unchecked Sendable {
     /// Replaces a file's symbols using already-parsed results (e.g. from the edit buffer).
     public func replace(file: URL, with symbols: [SymbolInfo]) {
         index.removeFile(file)
-        for symbol in symbols {
-            index.add(symbol)
-        }
+        index.add(symbols)
     }
 
     // MARK: - Private
@@ -77,9 +75,7 @@ public final class PHPProjectIndexer: @unchecked Sendable {
         }
         let parsed = PHPFileParser.parse(source, fileURL: file)
         index.removeFile(file)
-        for symbol in parsed.symbols {
-            index.add(symbol)
-        }
+        index.add(parsed.symbols)
         stateLock.lock()
         modTimes[file] = mtime
         stateLock.unlock()
