@@ -325,6 +325,7 @@ private struct PHPScanner {
         guard let nameNode = firstNamedChild(node, ofType: "name") else { return }
         let name = text(of: nameNode).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
+        let parameters = (kind == .function || kind == .method) ? parameterLabels(of: node) : []
         symbols.append(
             SymbolInfo(
                 name: name,
@@ -334,9 +335,32 @@ private struct PHPScanner {
                 fileURL: fileURL,
                 nameRange: nameNode.range,
                 fullRange: node.range,
+                parameters: parameters,
                 documentation: documentation(before: node.range.location)
             )
         )
+    }
+
+    /// Extracts human-readable parameter labels from a function/method declaration.
+    private func parameterLabels(of node: Node) -> [String] {
+        guard let parameters = firstNamedChild(node, ofType: "formal_parameters") else { return [] }
+        var labels: [String] = []
+        for index in 0..<parameters.namedChildCount {
+            guard let parameter = parameters.namedChild(at: index) else { continue }
+            let type = parameter.nodeType ?? ""
+            guard type == "simple_parameter"
+                || type == "variadic_parameter"
+                || type == "property_promotion_parameter" else { continue }
+
+            let name = firstNamedChild(parameter, ofType: "variable_name").map { text(of: $0) } ?? ""
+            var label = type == "variadic_parameter" ? "..." : ""
+            if let declaredType = typeText(of: parameter), !declaredType.isEmpty {
+                label += declaredType + " "
+            }
+            label += name
+            labels.append(label)
+        }
+        return labels
     }
 
     mutating func finish() -> PHPFileSymbols {

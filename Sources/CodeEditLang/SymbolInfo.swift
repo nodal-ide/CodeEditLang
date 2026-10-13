@@ -21,6 +21,8 @@ public struct SymbolInfo: Sendable {
     /// Range of the whole declaration (class body/function body) when known.
     public let fullRange: NSRange
     public let signature: String?
+    /// Parameter labels for functions/methods, e.g. `["string $view", "array $data = []"]`.
+    public let parameters: [String]
     public let documentation: String?
     public let visibility: String?
 
@@ -33,6 +35,7 @@ public struct SymbolInfo: Sendable {
         nameRange: NSRange,
         fullRange: NSRange,
         signature: String? = nil,
+        parameters: [String] = [],
         documentation: String? = nil,
         visibility: String? = nil
     ) {
@@ -44,6 +47,7 @@ public struct SymbolInfo: Sendable {
         self.nameRange = nameRange
         self.fullRange = fullRange
         self.signature = signature
+        self.parameters = parameters
         self.documentation = documentation
         self.visibility = visibility
 

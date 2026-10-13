@@ -204,6 +204,21 @@ final class PHPCodeModelTests: XCTestCase {
         XCTAssertTrue(labels.contains("VERIFY_KEY"), "expected class constant, got \(labels)")
     }
 
+    func testParsesFunctionParameters() {
+        let source = """
+        <?php
+        namespace App;
+
+        class Foo {
+            public function view(string $view, array $data = [], ?string $layout = null): void {}
+        }
+        """
+        let url = URL(fileURLWithPath: "/p/Foo.php")
+        let info = PHPFileParser.parse(source, fileURL: url)
+        let method = info.symbols.first { $0.name == "view" }
+        XCTAssertEqual(method?.parameters, ["string $view", "array $data", "?string $layout"])
+    }
+
     private func makeSymbol(
         _ name: String,
         namespace: String?,

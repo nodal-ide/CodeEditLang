@@ -43,7 +43,8 @@ public struct PHPCompletionItem: CodeSuggestionEntry {
 /// One instance is bound to an open file and a project `SymbolIndex`. Cross-file
 /// definition navigation is routed through `openLinkHandler` (supplied by the app, which
 /// owns the editor/document model).
-public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate, CodeSuggestionDelegate, HoverDelegate {
+public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate, CodeSuggestionDelegate, HoverDelegate,
+    SignatureHelpDelegate {
     public let languageID = "php"
 
     private let currentFileURL: URL
@@ -119,6 +120,33 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
             sections.append(documentation)
         }
         return HoverInfo(contents: sections.joined(separator: "\n\n"), range: range)
+    }
+
+    // MARK: - SignatureHelpDelegate
+
+    @MainActor
+    public func signatureHelp(
+        calleeRange: NSRange,
+        argumentIndex: Int,
+        textView: TextViewController
+    ) async -> SignatureHelpInfo? {
+        let source = textView.textView.string
+        let callee = (source as NSString).substring(with: calleeRange)
+        guard !callee.isEmpty else { return nil }
+
+        let parsed = PHPFileParser.parse(source, fileURL: currentFileURL)
+        let symbols = PHPSymbolResolver.resolve(
+            identifier: callee,
+            namespace: parsed.namespace,
+            aliases: parsed.aliases,
+            index: index
+        )
+        guard let symbol = symbols.first(where: { $0.kind == .method || $0.kind == .function }) ?? symbols.first else {
+            return nil
+        }
+        let signature = "\(symbol.name)(\(symbol.parameters.joined(separator: ", ")))"
+        let active = symbol.parameters.isEmpty ? 0 : min(max(argumentIndex, 0), symbol.parameters.count - 1)
+        return SignatureHelpInfo(signature: signature, parameters: symbol.parameters, activeParameter: active)
     }
 
     // MARK: - CodeSuggestionDelegate
