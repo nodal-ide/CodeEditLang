@@ -267,6 +267,23 @@ final class PHPCodeModelTests: XCTestCase {
         XCTAssertEqual(result?.0, "UserProvider")
     }
 
+    func testParsesClassReferences() {
+        let source = """
+        <?php
+        namespace App;
+
+        function f(): void {
+            $x = new StripeClient();
+        }
+        """
+        let url = URL(fileURLWithPath: "/p/f.php")
+        let info = PHPFileParser.parse(source, fileURL: url)
+        XCTAssertTrue(info.classReferences.contains { $0.name == "StripeClient" })
+        XCTAssertTrue(info.parseErrors.isEmpty)
+        XCTAssertTrue(PHPProvider.isPrimitiveType("string"))
+        XCTAssertFalse(PHPProvider.isPrimitiveType("StripeClient"))
+    }
+
     private func makeSymbol(
         _ name: String,
         namespace: String?,

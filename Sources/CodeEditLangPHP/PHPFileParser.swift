@@ -9,6 +9,12 @@ public struct PHPScope: Sendable {
     public let range: NSRange
 }
 
+/// A class name referenced in the file (e.g. `new Foo(`, `extends Bar`).
+public struct PHPClassReference: Sendable {
+    public let name: String
+    public let range: NSRange
+}
+
 /// The result of parsing a single PHP file.
 public struct PHPFileSymbols {
     public var namespace: String?
@@ -21,6 +27,10 @@ public struct PHPFileSymbols {
     public var scopes: [PHPScope] = []
     /// Trait names used by each class-like FQN (`class FQN -> [TraitName]`).
     public var classTraits: [String: [String]] = [:]
+    /// Ranges of tree-sitter `ERROR`/`MISSING` nodes.
+    public var parseErrors: [NSRange] = []
+    /// Class names referenced via `new X(...)`.
+    public var classReferences: [PHPClassReference] = []
     public var errorCount: Int = 0
 
     public static var empty: PHPFileSymbols { PHPFileSymbols() }
@@ -67,6 +77,8 @@ private struct PHPScanner {
     var symbols: [SymbolInfo] = []
     var scopes: [PHPScope] = []
     var classTraits: [String: [String]] = [:]
+    var parseErrors: [NSRange] = []
+    var classReferences: [PHPClassReference] = []
     var errorCount = 0
 
     private var currentClass: String?
@@ -83,6 +95,18 @@ private struct PHPScanner {
         switch type {
         case "ERROR", "MISSING":
             errorCount += 1
+            parseErrors.append(node.range)
+            scanChildren(node)
+
+        case "object_creation_expression":
+            if let nameNode = firstNamedChild(node, matching: {
+                $0 == "name" || $0 == "qualified_name" || $0 == "relative_name"
+            }) {
+                classReferences.append(
+                    PHPClassReference(name: normalized(name: text(of: nameNode)), range: nameNode.range)
+                )
+            }
+            scanChildren(node)
 
         case "namespace_definition":
             let hasBody = firstNamedChild(node, ofType: "compound_statement") != nil
@@ -371,6 +395,8 @@ private struct PHPScanner {
             variables: variableNames.sorted(),
             scopes: scopes,
             classTraits: classTraits,
+            parseErrors: parseErrors,
+            classReferences: classReferences,
             errorCount: errorCount
         )
     }

@@ -44,7 +44,7 @@ public struct PHPCompletionItem: CodeSuggestionEntry {
 /// definition navigation is routed through `openLinkHandler` (supplied by the app, which
 /// owns the editor/document model).
 public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate, CodeSuggestionDelegate, HoverDelegate,
-    SignatureHelpDelegate, CodeActionDelegate {
+    SignatureHelpDelegate, CodeActionDelegate, DiagnosticsDelegate {
     public let languageID = "php"
 
     private let currentFileURL: URL
@@ -159,6 +159,53 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
         let signature = "\(symbol.name)(\(symbol.parameters.joined(separator: ", ")))"
         let active = symbol.parameters.isEmpty ? 0 : min(max(argumentIndex, 0), symbol.parameters.count - 1)
         return SignatureHelpInfo(signature: signature, parameters: symbol.parameters, activeParameter: active)
+    }
+
+    // MARK: - DiagnosticsDelegate
+
+    @MainActor
+    public func diagnostics(for textView: TextViewController) async -> [EditorDiagnostic] {
+        let source = textView.textView.string
+        let info = PHPFileParser.parse(source, fileURL: currentFileURL)
+        let stubIndex = PHPStubIndex.shared()
+
+        var result: [EditorDiagnostic] = []
+        for range in info.parseErrors {
+            result.append(
+                EditorDiagnostic(range: range, severity: .error, message: "Syntax error")
+            )
+        }
+        for reference in info.classReferences where !Self.isPrimitiveType(reference.name) {
+            if !isClassDefined(reference.name, info: info, stubIndex: stubIndex) {
+                result.append(
+                    EditorDiagnostic(
+                        range: reference.range,
+                        severity: .warning,
+                        message: "Undefined class '\(reference.name)'"
+                    )
+                )
+            }
+        }
+        return result
+    }
+
+    private func isClassDefined(_ name: String, info: PHPFileSymbols, stubIndex: SymbolIndex) -> Bool {
+        if info.symbols.contains(where: { $0.name == name && $0.container == nil }) { return true }
+        return !PHPSymbolResolver.resolve(
+            identifier: name,
+            namespace: info.namespace,
+            aliases: info.aliases,
+            index: index,
+            stubIndex: stubIndex
+        ).isEmpty
+    }
+
+    nonisolated static func isPrimitiveType(_ name: String) -> Bool {
+        let lower = name.lowercased().replacingOccurrences(of: "\\", with: "")
+        return [
+            "string", "int", "float", "bool", "array", "mixed", "void", "object",
+            "iterable", "callable", "null", "self", "static", "parent", "true", "false", "never"
+        ].contains(lower)
     }
 
     // MARK: - CodeActionDelegate
