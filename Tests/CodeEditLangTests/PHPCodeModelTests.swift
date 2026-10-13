@@ -253,6 +253,20 @@ final class PHPCodeModelTests: XCTestCase {
         XCTAssertTrue(items.contains { $0.label == "strlen" }, "expected stub builtin strlen in completion")
     }
 
+    func testUseInsertionOffsetAfterUseBlock() {
+        let source = "<?php\n\nnamespace App;\n\nuse App\\Foo;\nuse App\\Bar;\n\nclass X {}\n"
+        let offset = PHPProvider.useInsertionOffset(in: source)
+        let prefix = (source as NSString).substring(to: offset)
+        XCTAssertTrue(prefix.hasSuffix("use App\\Bar;\n"), "got prefix: \(prefix.debugDescription)")
+    }
+
+    func testIdentifierAtCursor() {
+        let ns = "<?php $foo = new UserProvider();" as NSString
+        let offset = ns.range(of: "UserProvider").location + 5
+        let result = PHPProvider.identifier(at: NSRange(location: offset, length: 0), in: ns)
+        XCTAssertEqual(result?.0, "UserProvider")
+    }
+
     private func makeSymbol(
         _ name: String,
         namespace: String?,
