@@ -147,7 +147,8 @@ private struct PHPScanner {
                 namespace: namespace,
                 fileURL: fileURL,
                 nameRange: nameNode.range,
-                fullRange: node.range
+                fullRange: node.range,
+                documentation: documentation(before: node.range.location)
             )
         )
         scopes.append(PHPScope(fullyQualifiedName: fqn, range: node.range))
@@ -270,7 +271,8 @@ private struct PHPScanner {
                 container: container,
                 fileURL: fileURL,
                 nameRange: nameNode.range,
-                fullRange: node.range
+                fullRange: node.range,
+                documentation: documentation(before: node.range.location)
             )
         )
     }
@@ -305,6 +307,29 @@ private struct PHPScanner {
             trimmed.removeFirst()
         }
         return trimmed
+    }
+
+    /// Extracts a `/** ... */` docblock immediately preceding `location`, if any.
+    private func documentation(before location: Int) -> String? {
+        let safe = min(max(location, 0), source.length)
+        let prefix = (source.substring(to: safe) as NSString)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard prefix.hasSuffix("*/"), let startRange = prefix.range(of: "/**", options: .backwards) else {
+            return nil
+        }
+        var body = String(prefix[startRange.lowerBound...])
+        body = body.replacingOccurrences(of: "/**", with: "")
+        if body.hasSuffix("*/") { body.removeLast(2) }
+        let cleaned = body
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> String in
+                var text = line.trimmingCharacters(in: .whitespaces)
+                if text.hasPrefix("*") { text.removeFirst() }
+                return text.trimmingCharacters(in: .whitespaces)
+            }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
     }
 
     private func firstNamedChild(_ node: Node, ofType type: String) -> Node? {

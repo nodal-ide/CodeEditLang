@@ -43,7 +43,7 @@ public struct PHPCompletionItem: CodeSuggestionEntry {
 /// One instance is bound to an open file and a project `SymbolIndex`. Cross-file
 /// definition navigation is routed through `openLinkHandler` (supplied by the app, which
 /// owns the editor/document model).
-public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate, CodeSuggestionDelegate {
+public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate, CodeSuggestionDelegate, HoverDelegate {
     public let languageID = "php"
 
     private let currentFileURL: URL
@@ -94,6 +94,31 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
 
     public func openLink(link: JumpToDefinitionLink) {
         openLinkHandler(link)
+    }
+
+    // MARK: - HoverDelegate
+
+    @MainActor
+    public func hoverInfo(forRange range: NSRange, textView: TextViewController) async -> HoverInfo? {
+        let source = textView.textView.string
+        let identifier = (source as NSString).substring(with: range)
+        guard !identifier.isEmpty else { return nil }
+
+        let parsed = PHPFileParser.parse(source, fileURL: currentFileURL)
+        let symbols = PHPSymbolResolver.resolve(
+            identifier: identifier,
+            namespace: parsed.namespace,
+            aliases: parsed.aliases,
+            index: index
+        )
+        guard let symbol = symbols.first else { return nil }
+
+        var sections: [String] = []
+        sections.append("\(symbol.kind.rawValue) \(symbol.fullyQualifiedName)")
+        if let documentation = symbol.documentation, !documentation.isEmpty {
+            sections.append(documentation)
+        }
+        return HoverInfo(contents: sections.joined(separator: "\n\n"), range: range)
     }
 
     // MARK: - CodeSuggestionDelegate
