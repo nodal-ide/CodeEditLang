@@ -44,7 +44,7 @@ public struct PHPCompletionItem: CodeSuggestionEntry {
 /// definition navigation is routed through `openLinkHandler` (supplied by the app, which
 /// owns the editor/document model).
 public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate, CodeSuggestionDelegate, HoverDelegate,
-    SignatureHelpDelegate, CodeActionDelegate, DiagnosticsDelegate {
+    SignatureHelpDelegate, CodeActionDelegate, DiagnosticsDelegate, SymbolsDelegate {
     public let languageID = "php"
 
     private let currentFileURL: URL
@@ -159,6 +159,23 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
         let signature = "\(symbol.name)(\(symbol.parameters.joined(separator: ", ")))"
         let active = symbol.parameters.isEmpty ? 0 : min(max(argumentIndex, 0), symbol.parameters.count - 1)
         return SignatureHelpInfo(signature: signature, parameters: symbol.parameters, activeParameter: active)
+    }
+
+    // MARK: - SymbolsDelegate
+
+    @MainActor
+    public func documentSymbols(for textView: TextViewController) async -> [EditorSymbol] {
+        let source = textView.textView.string
+        let info = PHPFileParser.parse(source, fileURL: currentFileURL)
+        return info.symbols.compactMap { symbol in
+            guard symbol.nameRange.length > 0 else { return nil }
+            let detail = symbol.container.map { "\($0) — \(symbol.kind.rawValue)" } ?? symbol.kind.rawValue
+            return EditorSymbol(
+                name: symbol.name,
+                detail: detail,
+                position: CursorPosition(range: symbol.nameRange)
+            )
+        }
     }
 
     // MARK: - DiagnosticsDelegate
