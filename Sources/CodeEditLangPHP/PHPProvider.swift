@@ -43,9 +43,11 @@ public struct PHPCompletionItem: CodeSuggestionEntry {
 /// One instance is bound to an open file and a project `SymbolIndex`. Cross-file
 /// definition navigation is routed through `openLinkHandler` (supplied by the app, which
 /// owns the editor/document model).
-public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate, CodeSuggestionDelegate, HoverDelegate,
-    SignatureHelpDelegate, CodeActionDelegate, DiagnosticsDelegate, SymbolsDelegate {
+public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
     public let languageID = "php"
+
+    /// The built-in engine ranks above LSP but below user extensions.
+    public var priority: LanguageProviderPriority { .internalLanguage }
 
     private let currentFileURL: URL
     private let index: SymbolIndex
