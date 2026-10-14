@@ -348,10 +348,18 @@ public enum PHPCompletionEngine {
             )
         }
 
-        if let namespace = info.namespace, !namespace.isEmpty {
-            for symbol in index.symbols(prefix: prefix) where symbol.namespace == namespace && symbol.container == nil {
-                append(item(for: symbol))
-            }
+        // Workspace/project symbols and injected language-extension symbols (the `index`), offered
+        // regardless of the file's namespace: global and same-namespace matches first, then other
+        // namespaced matches (e.g. framework helpers contributed by a language pack).
+        let fileNamespace = info.namespace ?? ""
+        let indexMatches = index.symbols(prefix: prefix).filter { $0.container == nil }
+        for symbol in indexMatches
+        where (symbol.namespace ?? "").isEmpty || symbol.namespace == fileNamespace {
+            append(item(for: symbol))
+        }
+        for symbol in indexMatches
+        where !((symbol.namespace ?? "").isEmpty || symbol.namespace == fileNamespace) {
+            append(item(for: symbol))
         }
 
         for keyword in keywords where prefix.isEmpty || keyword.lowercased().hasPrefix(prefix.lowercased()) {
