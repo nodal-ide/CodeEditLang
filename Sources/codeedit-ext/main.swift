@@ -14,6 +14,9 @@
 import Foundation
 import CodeEditLang
 
+/// Raw URL of the published JSON schema (hosted in this repo, our fork).
+let rawSchemaURL = "https://raw.githubusercontent.com/upperdo/CodeEditLang/main/Schema/language-extension.schema.json"
+
 // MARK: - Entry point
 
 func main() {
@@ -231,8 +234,11 @@ func parseOptions(_ args: [String]) -> [String: String] {
 
 func writeManifest(_ manifest: LanguageExtensionManifest, to url: URL) throws {
     let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    let data = try encoder.encode(manifest)
+    encoder.outputFormatting = [.prettyPrinted]
+    let encoded = try encoder.encode(manifest)
+    var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
+    object["$schema"] = rawSchemaURL
+    let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
     try data.write(to: url)
 }
 
@@ -334,11 +340,12 @@ func readme(name: String, identifier: String, language: String) -> String {
 let schemaJSON = """
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://codeedit.app/schema/language-extension.json",
+  "$id": "https://raw.githubusercontent.com/upperdo/CodeEditLang/main/Schema/language-extension.schema.json",
   "title": "CodeEdit Language Extension",
   "type": "object",
   "required": ["id", "name"],
   "properties": {
+    "$schema": { "type": "string", "format": "uri" },
     "schemaVersion": { "type": "integer", "const": 1 },
     "id": { "type": "string", "minLength": 1, "description": "Reverse-DNS identifier, e.g. com.example.pack." },
     "name": { "type": "string", "minLength": 1 },

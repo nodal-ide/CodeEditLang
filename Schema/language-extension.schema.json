@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/upperdo/CodeEditLang/main/Schema/language-extension.schema.json",
+  "title": "CodeEdit Language Extension",
+  "type": "object",
+  "required": ["id", "name"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "id": { "type": "string", "minLength": 1, "description": "Reverse-DNS identifier, e.g. com.example.pack." },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "type": { "type": "string", "enum": ["languagePack", "languageProvider", "settings", "sidebar", "theme", "action"] },
+    "description": { "type": "string" },
+    "author": { "type": "string" },
+    "url": { "type": "string", "format": "uri" },
+    "icon": { "type": "string", "description": "Path to an image, relative to the pack root." },
+    "languages": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "framework": { "type": "string", "description": "Framework this pack targets, e.g. laravel/framework." },
+    "activation": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Literal workspace-relative marker paths. Wildcards are ignored."
+        },
+        "framework": {
+          "type": "object",
+          "properties": {
+            "file": { "type": "string", "default": "composer.json" },
+            "requires": { "type": "object", "additionalProperties": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "contributes": {
+      "type": "object",
+      "properties": {
+        "symbols": { "type": "array", "items": { "type": "string" } },
+        "snippets": { "type": "array", "items": { "type": "string" } },
+        "stubRoots": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "additionalProperties": true
+}
