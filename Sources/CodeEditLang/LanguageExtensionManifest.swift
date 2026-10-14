@@ -78,17 +78,39 @@ public struct LanguageExtensionManifest: Codable {
         public var snippets: [String]?
         public var stubRoots: [String]?
         public var provider: Provider?
+        public var knowledge: [Knowledge]?
 
         public init(
             symbols: [String]? = nil,
             snippets: [String]? = nil,
             stubRoots: [String]? = nil,
-            provider: Provider? = nil
+            provider: Provider? = nil,
+            knowledge: [Knowledge]? = nil
         ) {
             self.symbols = symbols
             self.snippets = snippets
             self.stubRoots = stubRoots
             self.provider = provider
+            self.knowledge = knowledge
+        }
+
+        /// An offline documentation set (Markdown/HTML pages + an `index.json`).
+        public struct Knowledge: Codable {
+            /// Stable id for the source.
+            public var id: String
+            /// Display title.
+            public var title: String
+            /// Folder inside the pack containing the pages. Defaults to the pack root.
+            public var root: String?
+            /// Index file, relative to `root`. Defaults to `index.json`.
+            public var index: String?
+
+            public init(id: String, title: String, root: String? = nil, index: String? = nil) {
+                self.id = id
+                self.title = title
+                self.root = root
+                self.index = index
+            }
         }
 
         /// A programmatic language provider, run out-of-process and spoken to over JSON-RPC on stdio.

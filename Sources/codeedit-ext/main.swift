@@ -381,6 +381,20 @@ let schemaJSON = """
         "symbols": { "type": "array", "items": { "type": "string" } },
         "snippets": { "type": "array", "items": { "type": "string" } },
         "stubRoots": { "type": "array", "items": { "type": "string" } },
+        "knowledge": {
+          "type": "array",
+          "description": "Offline documentation sets (Markdown/HTML pages + index.json).",
+          "items": {
+            "type": "object",
+            "required": ["id", "title"],
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "root": { "type": "string" },
+              "index": { "type": "string" }
+            }
+          }
+        },
         "provider": {
           "type": "object",
           "description": "An out-of-process language provider spoken to over JSON-RPC on stdio.",
