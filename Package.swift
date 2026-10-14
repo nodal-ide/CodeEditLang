@@ -41,6 +41,11 @@ let package = Package(
             name: "phpstubgen",
             dependencies: ["CodeEditLang", "CodeEditLangPHP"]
         ),
+        // Authoring tool for declarative language extensions (init/validate/pack/schema).
+        .executableTarget(
+            name: "codeedit-ext",
+            dependencies: ["CodeEditLang"]
+        ),
         .testTarget(
             name: "CodeEditLangTests",
             dependencies: ["CodeEditLangPHP"]
