@@ -18,10 +18,10 @@ public enum PHPStubIndex {
         if let cached { return cached }
 
         let index = SymbolIndex(maxSymbols: 400_000)
-        let url = Bundle.module.url(forResource: "phpstubs", withExtension: "json")
-            ?? Bundle.module.url(forResource: "phpstubs", withExtension: "json", subdirectory: "Resources")
+        let url = Bundle.module.url(forResource: "phpstubs", withExtension: "plist")
+            ?? Bundle.module.url(forResource: "phpstubs", withExtension: "plist", subdirectory: "Resources")
         if let url, let data = try? Data(contentsOf: url),
-           let entries = try? JSONDecoder().decode([StubEntry].self, from: data) {
+           let entries = try? PropertyListDecoder().decode([StubEntry].self, from: data) {
             let symbols = entries.map { entry in
                 SymbolInfo(
                     name: entry.name,

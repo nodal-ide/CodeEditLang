@@ -390,7 +390,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
         textView: TextViewController,
         cursorPosition: CursorPosition
     ) async -> (windowPosition: CursorPosition, items: [CodeSuggestionEntry])? {
-        let items = items(textView: textView, cursorPosition: cursorPosition)
+        let items = await asyncItems(textView: textView, cursorPosition: cursorPosition)
         return items.isEmpty ? nil : (cursorPosition, items)
     }
 
@@ -399,7 +399,7 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
         textView: TextViewController,
         cursorPosition: CursorPosition
     ) -> [CodeSuggestionEntry]? {
-        let items = items(textView: textView, cursorPosition: cursorPosition)
+        let items = syncItems(textView: textView, cursorPosition: cursorPosition)
         return items.isEmpty ? nil : items
     }
 
@@ -419,12 +419,32 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
 
     // MARK: - Items
 
+    /// Async path: parse off the main thread, then build (cheap) items here.
     @MainActor
-    private func items(textView: TextViewController, cursorPosition: CursorPosition) -> [PHPCompletionItem] {
+    private func asyncItems(textView: TextViewController, cursorPosition: CursorPosition) async -> [PHPCompletionItem] {
         let source = textView.textView.string
         let offset = cursorPosition.range.location
-        let prefixStart = Self.prefixStart(at: offset, text: source)
-        let signature = "\(source.utf16.count):\(offset):\(prefixStart)"
+        let signature = Self.signature(source: source, offset: offset)
+        if signature == lastItemsSignature { return lastItems }
+
+        let info = await PHPParseCache.shared.infoAsync(for: currentFileURL, source: source)
+        let built = PHPCompletionEngine.items(
+            info: info,
+            source: source,
+            cursorOffset: offset,
+            fileURL: currentFileURL,
+            index: index,
+            stubIndex: PHPStubIndex.shared()
+        )
+        return finalize(signature: signature, built: built)
+    }
+
+    /// Sync path (cursor-move filtering): reuses the cache warmed by the async path.
+    @MainActor
+    private func syncItems(textView: TextViewController, cursorPosition: CursorPosition) -> [PHPCompletionItem] {
+        let source = textView.textView.string
+        let offset = cursorPosition.range.location
+        let signature = Self.signature(source: source, offset: offset)
         if signature == lastItemsSignature { return lastItems }
 
         let built = PHPCompletionEngine.items(
@@ -434,15 +454,24 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
             index: index,
             stubIndex: PHPStubIndex.shared()
         )
+        return finalize(signature: signature, built: built)
+    }
+
+    @MainActor
+    private func finalize(signature: String, built: [PHPCompletionItem]) -> [PHPCompletionItem] {
         let capped = built.count > Self.maxItems ? Array(built.prefix(Self.maxItems)) : built
         lastItemsSignature = signature
         lastItems = capped
         return capped
     }
 
+    private nonisolated static func signature(source: String, offset: Int) -> String {
+        "\(source.utf16.count):\(offset):\(prefixStart(at: offset, text: source))"
+    }
+
     private static let maxItems = 200
 
-    private static func prefixStart(at location: Int, text: String) -> Int {
+    nonisolated private static func prefixStart(at location: Int, text: String) -> Int {
         let nsText = text as NSString
         var start = min(max(location, 0), nsText.length)
         while start > 0 {

@@ -37,6 +37,7 @@ public enum PHPCompletionEngine {
 
     // MARK: - Public
 
+    /// Synchronous entry point; parses via the shared cache on a miss.
     public static func items(
         source: String,
         cursorOffset: Int,
@@ -45,6 +46,22 @@ public enum PHPCompletionEngine {
         stubIndex: SymbolIndex? = nil
     ) -> [PHPCompletionItem] {
         let info = fileInfo(for: source, fileURL: fileURL)
+        return items(
+            info: info, source: source, cursorOffset: cursorOffset,
+            fileURL: fileURL, index: index, stubIndex: stubIndex
+        )
+    }
+
+    /// Builds items from already-parsed file info. Lets callers parse off the main thread and
+    /// then do the (cheap) item building here.
+    public static func items(
+        info: PHPFileSymbols,
+        source: String,
+        cursorOffset: Int,
+        fileURL: URL,
+        index: SymbolIndex,
+        stubIndex: SymbolIndex?
+    ) -> [PHPCompletionItem] {
         let analysis = analyze(source: source, offset: cursorOffset, fileInfo: info)
         Self.logger.notice(
             // swiftlint:disable:next line_length

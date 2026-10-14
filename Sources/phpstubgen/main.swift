@@ -71,8 +71,8 @@ while let file = enumerator?.nextObject() as? URL {
     }
 }
 
-let encoder = JSONEncoder()
-encoder.outputFormatting = [.withoutEscapingSlashes]
+let encoder = PropertyListEncoder()
+encoder.outputFormat = .binary
 let encoded = try encoder.encode(symbols)
 try encoded.write(to: output)
 
