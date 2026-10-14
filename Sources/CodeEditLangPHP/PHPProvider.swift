@@ -51,6 +51,9 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
     private let index: SymbolIndex
     private let openLinkHandler: (JumpToDefinitionLink) -> Void
 
+    /// Called with the file's diagnostics after each computation (for a problems panel).
+    public var onDiagnostics: ((URL, [EditorDiagnostic]) -> Void)?
+
     /// Coalesces the two completion callbacks that fire per keystroke
     /// (`completionSuggestionsRequested` + `completionOnCursorMove`).
     private var lastItemsSignature: String?
@@ -191,11 +194,16 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
         let info = await PHPParseCache.shared.infoAsync(for: currentFileURL, source: source)
         let stubIndex = PHPStubIndex.shared()
 
+        let lineStarts = Self.lineStartOffsets(in: source)
+        func line(at offset: Int) -> Int { Self.lineNumber(for: offset, in: lineStarts) }
+
         var result: [EditorDiagnostic] = []
 
         // 1. Syntax errors.
         for range in info.parseErrors {
-            result.append(EditorDiagnostic(range: range, severity: .error, message: "Syntax error"))
+            result.append(
+                EditorDiagnostic(range: range, severity: .error, message: "Syntax error", line: line(at: range.location))
+            )
         }
 
         // 2. Undefined variables.
@@ -204,7 +212,8 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
                 EditorDiagnostic(
                     range: variable.range,
                     severity: .warning,
-                    message: "Undefined variable '$\(variable.name)'"
+                    message: "Undefined variable '$\(variable.name)'",
+                    line: line(at: variable.range.location)
                 )
             )
         }
@@ -216,7 +225,8 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
                     EditorDiagnostic(
                         range: reference.range,
                         severity: .warning,
-                        message: "Undefined class '\(reference.name)'"
+                        message: "Undefined class '\(reference.name)'",
+                        line: line(at: reference.range.location)
                     )
                 )
             }
@@ -229,7 +239,8 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
                     EditorDiagnostic(
                         range: call.range,
                         severity: .warning,
-                        message: "Undefined function '\(call.name)'"
+                        message: "Undefined function '\(call.name)'",
+                        line: line(at: call.range.location)
                     )
                 )
             }
@@ -241,12 +252,39 @@ public final class PHPProvider: NativeLanguageProvider, JumpToDefinitionDelegate
                 EditorDiagnostic(
                     range: unused.range,
                     severity: .hint,
-                    message: "Unused import '\(unused.name)'"
+                    message: "Unused import '\(unused.name)'",
+                    line: line(at: unused.range.location)
                 )
             )
         }
 
+        onDiagnostics?(currentFileURL, result)
         return result
+    }
+
+    nonisolated private static func lineStartOffsets(in source: String) -> [Int] {
+        let ns = source as NSString
+        var starts: [Int] = [0]
+        var index = 0
+        while index < ns.length {
+            if ns.character(at: index) == 0x0A { starts.append(index + 1) }
+            index += 1
+        }
+        return starts
+    }
+
+    nonisolated private static func lineNumber(for offset: Int, in starts: [Int]) -> Int {
+        var low = 0
+        var high = starts.count
+        while low < high {
+            let mid = (low + high) / 2
+            if starts[mid] <= offset {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        return max(1, low)
     }
 
     private func isClassDefined(_ name: String, info: PHPFileSymbols, stubIndex: SymbolIndex) -> Bool {
