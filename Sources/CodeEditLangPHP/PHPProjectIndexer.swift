@@ -27,7 +27,9 @@ public final class PHPProjectIndexer: @unchecked Sendable {
     public func buildIndex(at root: URL) async {
         let files = phpFiles(at: root)
         guard !files.isEmpty else { return }
-        let maxConcurrent = max(2, ProcessInfo.processInfo.activeProcessorCount - 1)
+        // Keep concurrency modest so indexing doesn't starve the UI while it runs in the
+        // background (it starts when the first PHP file is opened).
+        let maxConcurrent = min(4, max(2, ProcessInfo.processInfo.activeProcessorCount - 1))
 
         await withTaskGroup(of: Void.self) { group in
             var next = 0
