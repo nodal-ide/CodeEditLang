@@ -15,7 +15,7 @@ import Foundation
 import CodeEditLang
 
 /// Raw URL of the published JSON schema (hosted in this repo, our fork).
-let rawSchemaURL = "https://raw.githubusercontent.com/upperdo/CodeEditLang/main/Schema/language-extension.schema.json"
+let rawSchemaURL = "https://raw.githubusercontent.com/upperdo/CodeEditLang/master/Schema/language-extension.schema.json"
 
 // MARK: - Entry point
 
@@ -340,7 +340,7 @@ func readme(name: String, identifier: String, language: String) -> String {
 let schemaJSON = """
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/upperdo/CodeEditLang/main/Schema/language-extension.schema.json",
+  "$id": "https://raw.githubusercontent.com/upperdo/CodeEditLang/master/Schema/language-extension.schema.json",
   "title": "CodeEdit Language Extension",
   "type": "object",
   "required": ["id", "name"],
