@@ -77,11 +77,40 @@ public struct LanguageExtensionManifest: Codable {
         public var symbols: [String]?
         public var snippets: [String]?
         public var stubRoots: [String]?
+        public var provider: Provider?
 
-        public init(symbols: [String]? = nil, snippets: [String]? = nil, stubRoots: [String]? = nil) {
+        public init(
+            symbols: [String]? = nil,
+            snippets: [String]? = nil,
+            stubRoots: [String]? = nil,
+            provider: Provider? = nil
+        ) {
             self.symbols = symbols
             self.snippets = snippets
             self.stubRoots = stubRoots
+            self.provider = provider
+        }
+
+        /// A programmatic language provider, run out-of-process and spoken to over JSON-RPC on stdio.
+        public struct Provider: Codable {
+            /// Executable to run. A path is resolved relative to the pack root; a bare name is looked
+            /// up on `PATH` (via `/usr/bin/env`).
+            public var command: String
+            public var args: [String]?
+            public var languages: [String]?
+            public var env: [String: String]?
+
+            public init(
+                command: String,
+                args: [String]? = nil,
+                languages: [String]? = nil,
+                env: [String: String]? = nil
+            ) {
+                self.command = command
+                self.args = args
+                self.languages = languages
+                self.env = env
+            }
         }
     }
 

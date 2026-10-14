@@ -39,7 +39,18 @@
       "properties": {
         "symbols": { "type": "array", "items": { "type": "string" } },
         "snippets": { "type": "array", "items": { "type": "string" } },
-        "stubRoots": { "type": "array", "items": { "type": "string" } }
+        "stubRoots": { "type": "array", "items": { "type": "string" } },
+        "provider": {
+          "type": "object",
+          "description": "An out-of-process language provider spoken to over JSON-RPC on stdio.",
+          "required": ["command"],
+          "properties": {
+            "command": { "type": "string", "description": "Executable (path resolved relative to the pack root, or a PATH name)." },
+            "args": { "type": "array", "items": { "type": "string" } },
+            "languages": { "type": "array", "items": { "type": "string" } },
+            "env": { "type": "object", "additionalProperties": { "type": "string" } }
+          }
+        }
       }
     }
   },

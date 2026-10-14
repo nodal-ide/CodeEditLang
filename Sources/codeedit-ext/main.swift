@@ -149,8 +149,9 @@ func runValidate(_ args: [String]) {
     if languages.isEmpty { warnings.append("No `languages` declared — the pack will never activate.") }
 
     let symbolFiles = manifest.contributes?.symbols ?? []
-    if symbolFiles.isEmpty {
-        warnings.append("No `contributes.symbols` — the pack contributes nothing.")
+    let hasProvider = manifest.contributes?.provider != nil
+    if symbolFiles.isEmpty && !hasProvider {
+        warnings.append("No `contributes.symbols` or `contributes.provider` — the extension contributes nothing.")
     }
     for file in symbolFiles {
         let url = directory.appending(path: file)
@@ -379,7 +380,18 @@ let schemaJSON = """
       "properties": {
         "symbols": { "type": "array", "items": { "type": "string" } },
         "snippets": { "type": "array", "items": { "type": "string" } },
-        "stubRoots": { "type": "array", "items": { "type": "string" } }
+        "stubRoots": { "type": "array", "items": { "type": "string" } },
+        "provider": {
+          "type": "object",
+          "description": "An out-of-process language provider spoken to over JSON-RPC on stdio.",
+          "required": ["command"],
+          "properties": {
+            "command": { "type": "string", "description": "Executable (path resolved relative to the pack root, or a PATH name)." },
+            "args": { "type": "array", "items": { "type": "string" } },
+            "languages": { "type": "array", "items": { "type": "string" } },
+            "env": { "type": "object", "additionalProperties": { "type": "string" } }
+          }
+        }
       }
     }
   },
