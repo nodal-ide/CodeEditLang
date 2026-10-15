@@ -188,6 +188,22 @@ extension LanguageProviderAggregator: InlayHintDelegate {
     }
 }
 
+// MARK: - FoldRangeDelegate
+
+extension LanguageProviderAggregator: FoldRangeDelegate {
+    @MainActor
+    public func foldRanges(for textView: TextViewController) async -> [EditorFoldRange] {
+        // Folding ranges are document-wide; prefer the highest-priority provider that has any.
+        for provider in providers {
+            let ranges = await provider.foldRanges(for: textView)
+            if !ranges.isEmpty {
+                return ranges
+            }
+        }
+        return []
+    }
+}
+
 // MARK: - DiagnosticsDelegate
 
 extension LanguageProviderAggregator: DiagnosticsDelegate {

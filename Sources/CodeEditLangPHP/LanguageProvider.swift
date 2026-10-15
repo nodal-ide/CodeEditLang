@@ -39,7 +39,8 @@ public protocol LanguageProvider: AnyObject,
     CodeActionDelegate,
     DiagnosticsDelegate,
     SymbolsDelegate,
-    InlayHintDelegate {
+    InlayHintDelegate,
+    FoldRangeDelegate {
 
     /// The language this provider serves, e.g. `"php"`.
     var languageID: String { get }
@@ -54,6 +55,12 @@ public extension LanguageProvider {
     /// Providers opt into inlay hints by overriding this. Default: none.
     @MainActor
     func inlayHints(forVisibleRange range: NSRange, textView: TextViewController) async -> [EditorInlayHint] {
+        []
+    }
+
+    /// Providers opt into language-server folding ranges by overriding this. Default: none.
+    @MainActor
+    func foldRanges(for textView: TextViewController) async -> [EditorFoldRange] {
         []
     }
 }
