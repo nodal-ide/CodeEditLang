@@ -168,6 +168,26 @@ extension LanguageProviderAggregator: CodeActionDelegate {
     }
 }
 
+// MARK: - InlayHintDelegate
+
+extension LanguageProviderAggregator: InlayHintDelegate {
+    @MainActor
+    public func inlayHints(
+        forVisibleRange range: NSRange,
+        textView: TextViewController
+    ) async -> [EditorInlayHint] {
+        // Inlay hints are additive but mixing providers would duplicate/conflict, so the
+        // highest-priority provider with hints for the range wins.
+        for provider in providers {
+            let hints = await provider.inlayHints(forVisibleRange: range, textView: textView)
+            if !hints.isEmpty {
+                return hints
+            }
+        }
+        return []
+    }
+}
+
 // MARK: - DiagnosticsDelegate
 
 extension LanguageProviderAggregator: DiagnosticsDelegate {

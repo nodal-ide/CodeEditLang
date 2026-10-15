@@ -38,7 +38,8 @@ public protocol LanguageProvider: AnyObject,
     SignatureHelpDelegate,
     CodeActionDelegate,
     DiagnosticsDelegate,
-    SymbolsDelegate {
+    SymbolsDelegate,
+    InlayHintDelegate {
 
     /// The language this provider serves, e.g. `"php"`.
     var languageID: String { get }
@@ -49,4 +50,10 @@ public protocol LanguageProvider: AnyObject,
 
 public extension LanguageProvider {
     var priority: LanguageProviderPriority { .internalLanguage }
+
+    /// Providers opt into inlay hints by overriding this. Default: none.
+    @MainActor
+    func inlayHints(forVisibleRange range: NSRange, textView: TextViewController) async -> [EditorInlayHint] {
+        []
+    }
 }
