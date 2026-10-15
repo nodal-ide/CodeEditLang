@@ -204,6 +204,24 @@ extension LanguageProviderAggregator: FoldRangeDelegate {
     }
 }
 
+// MARK: - DocumentHighlightDelegate
+
+extension LanguageProviderAggregator: DocumentHighlightDelegate {
+    @MainActor
+    public func documentHighlights(
+        at position: CursorPosition,
+        textView: TextViewController
+    ) async -> [EditorDocumentHighlight] {
+        for provider in providers {
+            let highlights = await provider.documentHighlights(at: position, textView: textView)
+            if !highlights.isEmpty {
+                return highlights
+            }
+        }
+        return []
+    }
+}
+
 // MARK: - DiagnosticsDelegate
 
 extension LanguageProviderAggregator: DiagnosticsDelegate {

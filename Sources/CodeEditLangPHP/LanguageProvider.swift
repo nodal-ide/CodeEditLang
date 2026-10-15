@@ -40,7 +40,8 @@ public protocol LanguageProvider: AnyObject,
     DiagnosticsDelegate,
     SymbolsDelegate,
     InlayHintDelegate,
-    FoldRangeDelegate {
+    FoldRangeDelegate,
+    DocumentHighlightDelegate {
 
     /// The language this provider serves, e.g. `"php"`.
     var languageID: String { get }
@@ -61,6 +62,15 @@ public extension LanguageProvider {
     /// Providers opt into language-server folding ranges by overriding this. Default: none.
     @MainActor
     func foldRanges(for textView: TextViewController) async -> [EditorFoldRange] {
+        []
+    }
+
+    /// Providers opt into document highlights by overriding this. Default: none.
+    @MainActor
+    func documentHighlights(
+        at position: CursorPosition,
+        textView: TextViewController
+    ) async -> [EditorDocumentHighlight] {
         []
     }
 }
