@@ -31,6 +31,9 @@ public final class PHPProjectIndexer: @unchecked Sendable {
     /// Called with each file's diagnostics during indexing. Invoked off the main thread.
     public var onDiagnostics: (@Sendable (URL, [PHPDiagnostic]) -> Void)?
 
+    /// Reports `(completed, total)` file counts as indexing/diagnosing progresses. Off the main thread.
+    public var onProgress: (@Sendable (Int, Int) -> Void)?
+
     /// Scans a folder and indexes all `.php` files, concurrently and incrementally.
     public func buildIndex(at root: URL) async {
         // Load the persisted cache first: instant symbols + diagnostics for unchanged files.
@@ -51,9 +54,12 @@ public final class PHPProjectIndexer: @unchecked Sendable {
         // Keep concurrency modest so indexing doesn't starve the UI while it runs in the
         // background (it starts when the first PHP file is opened).
         let maxConcurrent = min(4, max(2, ProcessInfo.processInfo.activeProcessorCount - 1))
+        let total = files.count
+        onProgress?(0, total)
 
         await withTaskGroup(of: Void.self) { group in
             var next = 0
+            var completed = 0
             func addTask(_ file: URL) {
                 group.addTask { [weak self] in self?.indexFile(file) }
             }
@@ -62,6 +68,8 @@ public final class PHPProjectIndexer: @unchecked Sendable {
                 next += 1
             }
             while await group.next() != nil {
+                completed += 1
+                onProgress?(completed, total)
                 if next < files.count {
                     addTask(files[next])
                     next += 1
@@ -70,6 +78,7 @@ public final class PHPProjectIndexer: @unchecked Sendable {
         }
 
         saveCache(for: root, files: files)
+        onProgress?(total, total)
     }
 
     /// Persists the index + diagnostics for the scanned files.
