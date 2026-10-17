@@ -56,6 +56,9 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
     /// Called with the file's diagnostics after each computation (for a problems panel).
     public var onDiagnostics: ((URL, [EditorDiagnostic]) -> Void)?
 
+    /// Code-quality rule configuration (thresholds, enabled rules, skip paths). Injected by the app.
+    public var diagnosticsConfig: PHPDiagnosticsConfig = .default
+
     /// Coalesces the two completion callbacks that fire per keystroke
     /// (`completionSuggestionsRequested` + `completionOnCursorMove`).
     private var lastItemsSignature: String?
@@ -260,77 +263,18 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
             )
         }
 
-        // 6. Length rules (class/method/file), like SwiftLint's type_body_length.
-        result.append(contentsOf: Self.lengthDiagnostics(info: info, lineStarts: lineStarts))
+        // 6. Code-quality rules (length, complexity, strict types, TODO, …).
+        result.append(contentsOf: PHPDiagnosticsEngine.run(
+            source: source,
+            info: info,
+            fileURL: currentFileURL,
+            settings: diagnosticsConfig
+        ).map {
+            EditorDiagnostic(range: $0.range, severity: $0.severity, message: $0.message, line: $0.line)
+        })
 
         onDiagnostics?(currentFileURL, result)
         return result
-    }
-
-    // MARK: - Length rules
-
-    /// Maximum lines for a class-like declaration / a function or method / the whole file.
-    private static let maxClassLines = 250
-    private static let maxMemberLines = 50
-    private static let maxFileLines = 500
-
-    /// SwiftLint-style length diagnostics: oversized classes, functions/methods, and files.
-    nonisolated private static func lengthDiagnostics(
-        info: PHPFileSymbols,
-        lineStarts: [Int]
-    ) -> [EditorDiagnostic] {
-        var result: [EditorDiagnostic] = []
-
-        let fileLines = lineStarts.count
-        if fileLines > maxFileLines {
-            result.append(
-                EditorDiagnostic(
-                    range: NSRange(location: 0, length: 0),
-                    severity: .warning,
-                    message: "File is \(fileLines) lines long (max \(maxFileLines))",
-                    line: 1
-                )
-            )
-        }
-
-        for symbol in info.symbols {
-            let line = lineNumber(for: symbol.nameRange.location, in: lineStarts)
-            let span = lineSpan(of: symbol.fullRange, in: lineStarts)
-            switch symbol.kind {
-            case .class, .interface, .trait, .enum:
-                guard span > maxClassLines else { continue }
-                result.append(
-                    EditorDiagnostic(
-                        range: symbol.nameRange,
-                        severity: .warning,
-                        message: "Type '\(symbol.name)' is \(span) lines long (max \(maxClassLines))",
-                        line: line
-                    )
-                )
-            case .function, .method:
-                guard span > maxMemberLines else { continue }
-                let noun = symbol.kind == .method ? "Method" : "Function"
-                result.append(
-                    EditorDiagnostic(
-                        range: symbol.nameRange,
-                        severity: .warning,
-                        message: "\(noun) '\(symbol.name)' is \(span) lines long (max \(maxMemberLines))",
-                        line: line
-                    )
-                )
-            default:
-                continue
-            }
-        }
-        return result
-    }
-
-    /// The number of lines a range spans (1-based, inclusive).
-    nonisolated private static func lineSpan(of range: NSRange, in starts: [Int]) -> Int {
-        guard range.length > 0 else { return 1 }
-        let start = lineNumber(for: range.location, in: starts)
-        let end = lineNumber(for: range.location + range.length - 1, in: starts)
-        return max(1, end - start + 1)
     }
 
     nonisolated private static func lineStartOffsets(in source: String) -> [Int] {
