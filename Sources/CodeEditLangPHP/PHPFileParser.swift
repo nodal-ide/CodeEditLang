@@ -655,9 +655,13 @@ private struct PHPScanner {
     }
 
     /// Extracts a `/** ... */` docblock immediately preceding `location`, if any.
+    ///
+    /// Only a bounded window before `location` is scanned (docblocks are small), so this is O(1) per
+    /// symbol rather than O(document).
     private func documentation(before location: Int) -> String? {
         let safe = min(max(location, 0), source.length)
-        let prefix = (source.substring(to: safe) as NSString)
+        let lower = max(0, safe - 4096)
+        let prefix = source.substring(with: NSRange(location: lower, length: safe - lower))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard prefix.hasSuffix("*/"), let startRange = prefix.range(of: "/**", options: .backwards) else {
             return nil
