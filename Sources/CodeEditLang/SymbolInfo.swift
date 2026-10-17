@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Ranges are UTF-16 offsets into the document, matching `NSString`/`NSRange`
 /// so the values can be handed directly to the editor (`CursorPosition`).
-public struct SymbolInfo: Sendable {
+public struct SymbolInfo: Codable, Sendable {
     /// Short name, e.g. `User` or `handle`.
     public let name: String
     public let kind: SymbolKind

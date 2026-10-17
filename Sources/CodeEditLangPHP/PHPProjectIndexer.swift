@@ -11,6 +11,7 @@ public final class PHPProjectIndexer: @unchecked Sendable {
     private let ignoredRelativePaths: Set<String>
     private let stateLock = NSLock()
     private var modTimes: [URL: Date] = [:]
+    private var diagnosticsByFile: [URL: [PHPDiagnostic]] = [:]
 
     public init(
         index: SymbolIndex = SymbolIndex(),
@@ -32,6 +33,19 @@ public final class PHPProjectIndexer: @unchecked Sendable {
 
     /// Scans a folder and indexes all `.php` files, concurrently and incrementally.
     public func buildIndex(at root: URL) async {
+        // Load the persisted cache first: instant symbols + diagnostics for unchanged files.
+        if let cache = PHPProjectCache.load(for: root) {
+            for entry in cache.files {
+                let url = URL(fileURLWithPath: entry.path)
+                index.add(entry.symbols)
+                stateLock.lock()
+                modTimes[url] = entry.modified
+                diagnosticsByFile[url] = entry.diagnostics
+                stateLock.unlock()
+                onDiagnostics?(url, entry.diagnostics)
+            }
+        }
+
         let files = phpFiles(at: root)
         guard !files.isEmpty else { return }
         // Keep concurrency modest so indexing doesn't starve the UI while it runs in the
@@ -54,6 +68,25 @@ public final class PHPProjectIndexer: @unchecked Sendable {
                 }
             }
         }
+
+        saveCache(for: root, files: files)
+    }
+
+    /// Persists the index + diagnostics for the scanned files.
+    private func saveCache(for root: URL, files: [URL]) {
+        let entries = files.map { file -> PHPProjectCache.FileEntry in
+            stateLock.lock()
+            let mtime = modTimes[file] ?? .distantPast
+            let diagnostics = diagnosticsByFile[file] ?? []
+            stateLock.unlock()
+            return PHPProjectCache.FileEntry(
+                path: file.path(percentEncoded: false),
+                modified: mtime,
+                symbols: index.symbols(inFile: file),
+                diagnostics: diagnostics
+            )
+        }
+        PHPProjectCache.save(entries, for: root)
     }
 
     /// Re-parses a single file unconditionally and applies the difference. Call on save/edit.
@@ -90,15 +123,19 @@ public final class PHPProjectIndexer: @unchecked Sendable {
         stateLock.unlock()
 
         // Code-quality diagnostics (skip very large files to bound work).
-        if let diagnosticsConfig, data.count < 1_000_000, let onDiagnostics {
-            let issues = PHPDiagnosticsEngine.run(
+        var issues: [PHPDiagnostic] = []
+        if let diagnosticsConfig, data.count < 1_000_000 {
+            issues = PHPDiagnosticsEngine.run(
                 source: source,
                 info: parsed,
                 fileURL: file,
                 settings: diagnosticsConfig
             )
-            onDiagnostics(file, issues)
         }
+        stateLock.lock()
+        diagnosticsByFile[file] = issues
+        stateLock.unlock()
+        onDiagnostics?(file, issues)
     }
 
     private func phpFiles(at root: URL) -> [URL] {

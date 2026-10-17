@@ -35,7 +35,7 @@ public struct PHPDiagnosticsConfig: Sendable {
 }
 
 /// A single code-quality issue found by the engine.
-public struct PHPDiagnostic: Sendable {
+public struct PHPDiagnostic: Codable, Sendable {
     public let ruleID: String
     public let range: NSRange
     public let severity: EditorDiagnosticSeverity
