@@ -433,6 +433,12 @@ private struct PHPScanner {
                 || type == "variadic_parameter"
                 || type == "property_promotion_parameter" else { continue }
 
+            // Constructor-promoted parameters carry their modifiers (e.g. `private readonly Foo $x`) so the
+            // diagnostics engine can tell they're used via promotion and skip them.
+            if type == "property_promotion_parameter" {
+                labels.append(text(of: parameter).trimmingCharacters(in: .whitespacesAndNewlines))
+                continue
+            }
             let name = firstNamedChild(parameter, ofType: "variable_name").map { text(of: $0) } ?? ""
             var label = type == "variadic_parameter" ? "..." : ""
             if let declaredType = typeText(of: parameter), !declaredType.isEmpty {

@@ -24,8 +24,8 @@ public struct PHPDiagnosticsConfig: Sendable {
     public var reportTodos: Bool = true
     /// PSR naming-convention rules (off by default; can be noisy).
     public var reportNaming: Bool = false
-    /// Rule ids to disable, e.g. `php.style.todo`.
-    public var disabledRules: Set<String> = []
+    /// Rule ids to disable. `unusedParameter` is opt-in (noisy on interfaces/DI constructors).
+    public var disabledRules: Set<String> = ["php.deadCode.unusedParameter"]
     /// Path substrings/globs to skip entirely (vendor, generated files).
     public var skipPatterns: [String] = ["/vendor/", ".generated."]
 
@@ -70,6 +70,10 @@ public enum PHPDiagnosticsEngine {
         guard !isSkipped(fileURL: fileURL, settings: settings) else { return [] }
 
         let lineStarts = lineStartOffsets(in: source)
+        let sourceLength = (source as NSString).length
+        // A non-empty range for file-level issues (an empty range at 0 can't be rendered as an underline).
+        let firstLineEnd = lineStarts.count > 1 ? lineStarts[1] - 1 : sourceLength
+        let firstLineRange = NSRange(location: 0, length: max(1, min(firstLineEnd, sourceLength)))
         let suppressed = suppressionMap(source: source)
 
         var result: [PHPDiagnostic] = []
@@ -90,7 +94,7 @@ public enum PHPDiagnosticsEngine {
         if fileLines > settings.fileLength {
             add(PHPDiagnostic(
                 ruleID: PHPRule.lengthFile,
-                range: NSRange(location: 0, length: 0),
+                range: firstLineRange,
                 severity: .warning,
                 message: "File is \(fileLines) lines long (max \(settings.fileLength))",
                 line: 1
@@ -152,7 +156,7 @@ public enum PHPDiagnosticsEngine {
         if settings.requireStrictTypes, source.contains("<?php"), !hasStrictTypes(source) {
             add(PHPDiagnostic(
                 ruleID: PHPRule.strictTypes,
-                range: NSRange(location: 0, length: 0),
+                range: firstLineRange,
                 severity: .hint,
                 message: "Missing 'declare(strict_types=1);'",
                 line: 1
@@ -184,7 +188,6 @@ public enum PHPDiagnosticsEngine {
         }
 
         // Line length.
-        let sourceLength = (source as NSString).length
         for index in lineStarts.indices {
             let start = lineStarts[index]
             let end = index + 1 < lineStarts.count ? lineStarts[index + 1] - 1 : sourceLength
