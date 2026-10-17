@@ -47,6 +47,8 @@ public struct PHPFileSymbols {
     public var undefinedVariables: [PHPVariableReference] = []
     /// Imported aliases that are never referenced.
     public var unusedImports: [PHPNameReference] = []
+    /// Ranges of loose comparison operators (`==`/`!=`).
+    public var looseComparisons: [NSRange] = []
     public var errorCount: Int = 0
 
     public static var empty: PHPFileSymbols { PHPFileSymbols() }
@@ -102,6 +104,7 @@ private struct PHPScanner {
     var referencedNames: Set<String> = []
     var declaredVariables: Set<String> = []
     var variableUsages: [PHPVariableReference] = []
+    var looseComparisons: [NSRange] = []
     var errorCount = 0
 
     private var currentClass: String?
@@ -112,6 +115,18 @@ private struct PHPScanner {
         self.fileURL = fileURL
     }
 
+    /// The range of a loose comparison operator (`==`/`!=`) in a binary expression, if any.
+    private func looseComparisonOperator(_ node: Node) -> NSRange? {
+        for index in 0..<node.childCount {
+            guard let child = node.child(at: index) else { continue }
+            let childText = text(of: child)
+            if childText == "==" || childText == "!=" {
+                return child.range
+            }
+        }
+        return nil
+    }
+
     mutating func scan(_ node: Node) {
         let type = node.nodeType ?? ""
 
@@ -119,6 +134,12 @@ private struct PHPScanner {
         case "ERROR", "MISSING":
             errorCount += 1
             parseErrors.append(node.range)
+            scanChildren(node)
+
+        case "binary_expression":
+            if let range = looseComparisonOperator(node) {
+                looseComparisons.append(range)
+            }
             scanChildren(node)
 
         case "namespace_definition":
@@ -195,6 +216,7 @@ private struct PHPScanner {
                 fileURL: fileURL,
                 nameRange: nameNode.range,
                 fullRange: node.range,
+                bodyRange: bodyRange(of: node),
                 documentation: documentation(before: node.range.location)
             )
         )
@@ -383,10 +405,21 @@ private struct PHPScanner {
                 fileURL: fileURL,
                 nameRange: nameNode.range,
                 fullRange: node.range,
+                bodyRange: bodyRange(of: node),
                 parameters: parameters,
                 documentation: documentation(before: node.range.location)
             )
         )
+    }
+
+    /// Range of a declaration's body braces (`{ … }`) when present.
+    private func bodyRange(of node: Node) -> NSRange? {
+        for type in ["compound_statement", "declaration_list", "enum_declaration_list"] {
+            if let child = firstNamedChild(node, ofType: type) {
+                return child.range
+            }
+        }
+        return nil
     }
 
     /// Extracts human-readable parameter labels from a function/method declaration.
@@ -438,6 +471,7 @@ private struct PHPScanner {
             imports: imports,
             undefinedVariables: undefined,
             unusedImports: unused,
+            looseComparisons: looseComparisons,
             errorCount: errorCount
         )
     }

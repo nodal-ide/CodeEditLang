@@ -20,6 +20,8 @@ public struct SymbolInfo: Sendable {
     public let nameRange: NSRange
     /// Range of the whole declaration (class body/function body) when known.
     public let fullRange: NSRange
+    /// Range of the declaration's body braces (`{ … }`) when known.
+    public let bodyRange: NSRange?
     public let signature: String?
     /// Parameter labels for functions/methods, e.g. `["string $view", "array $data = []"]`.
     public let parameters: [String]
@@ -34,6 +36,7 @@ public struct SymbolInfo: Sendable {
         fileURL: URL,
         nameRange: NSRange,
         fullRange: NSRange,
+        bodyRange: NSRange? = nil,
         signature: String? = nil,
         parameters: [String] = [],
         documentation: String? = nil,
@@ -46,6 +49,7 @@ public struct SymbolInfo: Sendable {
         self.fileURL = fileURL
         self.nameRange = nameRange
         self.fullRange = fullRange
+        self.bodyRange = bodyRange
         self.signature = signature
         self.parameters = parameters
         self.documentation = documentation

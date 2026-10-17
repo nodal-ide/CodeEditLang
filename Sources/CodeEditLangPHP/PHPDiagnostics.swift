@@ -16,10 +16,14 @@ public struct PHPDiagnosticsConfig: Sendable {
     public var fileLength: Int = 500
     public var parameterCount: Int = 5
     public var complexity: Int = 10
+    /// Max characters per line.
+    public var lineLength: Int = 120
     /// `declare(strict_types=1);` hint.
     public var requireStrictTypes: Bool = true
     /// `TODO`/`FIXME` hints.
     public var reportTodos: Bool = true
+    /// PSR naming-convention rules (off by default; can be noisy).
+    public var reportNaming: Bool = false
     /// Rule ids to disable, e.g. `php.style.todo`.
     public var disabledRules: Set<String> = []
     /// Path substrings/globs to skip entirely (vendor, generated files).
@@ -46,8 +50,13 @@ public enum PHPRule {
     public static let lengthFile = "php.length.file"
     public static let parameterCount = "php.style.parameterCount"
     public static let complexity = "php.complexity"
+    public static let lineLength = "php.style.lineLength"
     public static let strictTypes = "php.strictTypes"
     public static let todo = "php.style.todo"
+    public static let looseComparison = "php.safety.looseComparison"
+    public static let unusedParameter = "php.deadCode.unusedParameter"
+    public static let namingClass = "php.naming.class"
+    public static let namingMethod = "php.naming.method"
 }
 
 /// Runs the built-in PHP code-quality rules over a parsed file.
@@ -163,7 +172,108 @@ public enum PHPDiagnosticsEngine {
             }
         }
 
+        // Loose comparisons (`==` / `!=`).
+        for range in info.looseComparisons {
+            add(PHPDiagnostic(
+                ruleID: PHPRule.looseComparison,
+                range: range,
+                severity: .hint,
+                message: "Use strict comparison (=== / !==)",
+                line: line(at: range.location)
+            ))
+        }
+
+        // Line length.
+        let sourceLength = (source as NSString).length
+        for index in lineStarts.indices {
+            let start = lineStarts[index]
+            let end = index + 1 < lineStarts.count ? lineStarts[index + 1] - 1 : sourceLength
+            let length = max(0, end - start)
+            if length > settings.lineLength {
+                add(PHPDiagnostic(
+                    ruleID: PHPRule.lineLength,
+                    range: NSRange(location: start, length: length),
+                    severity: .hint,
+                    message: "Line is \(length) characters long (max \(settings.lineLength))",
+                    line: index + 1
+                ))
+            }
+        }
+
+        // Unused parameters.
+        for symbol in info.symbols where symbol.kind == .function || symbol.kind == .method {
+            guard let bodyRange = symbol.bodyRange else { continue }
+            let body = substring(of: bodyRange, in: source)
+            for label in symbol.parameters {
+                guard let name = parameterName(label), !isPromotedOrVariadic(label) else { continue }
+                if !containsVariable(name, in: body) {
+                    add(PHPDiagnostic(
+                        ruleID: PHPRule.unusedParameter,
+                        range: symbol.nameRange,
+                        severity: .hint,
+                        message: "Unused parameter '$\(name)'",
+                        line: line(at: symbol.nameRange.location)
+                    ))
+                }
+            }
+        }
+
+        // PSR naming conventions (opt-in).
+        if settings.reportNaming {
+            for symbol in info.symbols {
+                switch symbol.kind {
+                case .class, .interface, .trait, .enum:
+                    if !matches(symbol.name, "^[A-Z][A-Za-z0-9]*$") {
+                        add(PHPDiagnostic(
+                            ruleID: PHPRule.namingClass,
+                            range: symbol.nameRange,
+                            severity: .hint,
+                            message: "Class-like name '\(symbol.name)' should be StudlyCaps",
+                            line: line(at: symbol.nameRange.location)
+                        ))
+                    }
+                case .method:
+                    if !symbol.name.hasPrefix("__"), !matches(symbol.name, "^[a-z][A-Za-z0-9]*$") {
+                        add(PHPDiagnostic(
+                            ruleID: PHPRule.namingMethod,
+                            range: symbol.nameRange,
+                            severity: .hint,
+                            message: "Method name '\(symbol.name)' should be camelCase",
+                            line: line(at: symbol.nameRange.location)
+                        ))
+                    }
+                default:
+                    continue
+                }
+            }
+        }
+
         return result
+    }
+
+    // MARK: - Parameter helpers
+
+    private static func parameterName(_ label: String) -> String? {
+        guard let range = label.range(of: "\\$[A-Za-z_][A-Za-z0-9_]*", options: .regularExpression) else {
+            return nil
+        }
+        return String(label[range].dropFirst())
+    }
+
+    private static func isPromotedOrVariadic(_ label: String) -> Bool {
+        if label.contains("...") { return true }
+        return ["public", "private", "protected", "readonly"].contains { label.contains($0) }
+    }
+
+    private static func containsVariable(_ name: String, in body: String) -> Bool {
+        let pattern = "\\$\(NSRegularExpression.escapedPattern(for: name))\\b"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return true }
+        return regex.firstMatch(in: body, range: NSRange(location: 0, length: (body as NSString).length)) != nil
+    }
+
+    private static func matches(_ string: String, _ pattern: String) -> Bool {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return true }
+        return regex.firstMatch(in: string, range: NSRange(location: 0, length: (string as NSString).length)) != nil
     }
 
     // MARK: - Rule helpers
