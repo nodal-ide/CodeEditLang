@@ -138,12 +138,16 @@ public enum PHPDiagnosticsEngine {
                     ))
                 }
                 let complexity = cyclomaticComplexity(in: substring(of: symbol.fullRange, in: source))
-                if complexity > settings.complexity {
+                if complexity.total > settings.complexity {
+                    let noun = symbol.kind == .method ? "Method" : "Function"
+                    let detail = complexity.breakdown.map { "\($0.count)× \($0.label)" }.joined(separator: ", ")
                     add(PHPDiagnostic(
                         ruleID: PHPRule.complexity,
                         range: symbol.nameRange,
                         severity: .warning,
-                        message: "'\(symbol.name)' has complexity \(complexity) (max \(settings.complexity))",
+                        message: "\(noun) '\(symbol.name)' has cyclomatic complexity \(complexity.total) "
+                            + "(max \(settings.complexity)): \(detail). "
+                            + "Consider extracting logic into smaller functions or early returns.",
                         line: symbolLine
                     ))
                 }
@@ -287,14 +291,33 @@ public enum PHPDiagnosticsEngine {
         return head.contains("declare(strict_types=1)") || head.contains("declare(strict_types = 1)")
     }
 
-    private static func cyclomaticComplexity(in body: String) -> Int {
-        let patterns = ["\\bif\\b", "\\belseif\\b", "\\belse\\b", "\\bfor\\b", "\\bforeach\\b",
-                        "\\bwhile\\b", "\\bcase\\b", "\\bcatch\\b", "&&", "\\|\\|", "\\?\\?"]
-        var complexity = 1
-        for pattern in patterns {
-            complexity += body.matches(of: pattern)
+    /// Cyclomatic complexity of a body: 1 + the number of decision points, plus a breakdown of which
+    /// constructs contribute (so the diagnostic can explain itself).
+    private static func cyclomaticComplexity(
+        in body: String
+    ) -> (total: Int, breakdown: [(label: String, count: Int)]) {
+        let patterns: [(label: String, pattern: String)] = [
+            ("if", "\\bif\\b"),
+            ("elseif", "\\belseif\\b"),
+            ("for", "\\bfor\\b"),
+            ("foreach", "\\bforeach\\b"),
+            ("while", "\\bwhile\\b"),
+            ("case", "\\bcase\\b"),
+            ("catch", "\\bcatch\\b"),
+            ("&&", "&&"),
+            ("||", "\\|\\|"),
+            ("??", "\\?\\?")
+        ]
+        var total = 1
+        var breakdown: [(label: String, count: Int)] = []
+        for (label, pattern) in patterns {
+            let count = body.matches(of: pattern)
+            if count > 0 {
+                total += count
+                breakdown.append((label, count))
+            }
         }
-        return complexity
+        return (total, breakdown)
     }
 
     private static func todoLocations(in source: String) -> [(Int, NSRange)] {
