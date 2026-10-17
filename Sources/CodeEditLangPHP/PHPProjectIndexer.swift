@@ -23,6 +23,13 @@ public final class PHPProjectIndexer: @unchecked Sendable {
     /// The shared symbol table the indexer writes into.
     public var symbolIndex: SymbolIndex { index }
 
+    /// When set, code-quality diagnostics are computed for every indexed file and delivered to
+    /// ``onDiagnostics`` (on a background thread).
+    public var diagnosticsConfig: PHPDiagnosticsConfig?
+
+    /// Called with each file's diagnostics during indexing. Invoked off the main thread.
+    public var onDiagnostics: (@Sendable (URL, [PHPDiagnostic]) -> Void)?
+
     /// Scans a folder and indexes all `.php` files, concurrently and incrementally.
     public func buildIndex(at root: URL) async {
         let files = phpFiles(at: root)
@@ -81,6 +88,17 @@ public final class PHPProjectIndexer: @unchecked Sendable {
         stateLock.lock()
         modTimes[file] = mtime
         stateLock.unlock()
+
+        // Code-quality diagnostics (skip very large files to bound work).
+        if let diagnosticsConfig, data.count < 1_000_000, let onDiagnostics {
+            let issues = PHPDiagnosticsEngine.run(
+                source: source,
+                info: parsed,
+                fileURL: file,
+                settings: diagnosticsConfig
+            )
+            onDiagnostics(file, issues)
+        }
     }
 
     private func phpFiles(at root: URL) -> [URL] {
