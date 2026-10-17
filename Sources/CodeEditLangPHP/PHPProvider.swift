@@ -270,7 +270,13 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
             fileURL: currentFileURL,
             settings: diagnosticsConfig
         ).map {
-            EditorDiagnostic(range: $0.range, severity: $0.severity, message: $0.message, line: $0.line)
+            EditorDiagnostic(
+                range: $0.range,
+                severity: $0.severity,
+                message: $0.message,
+                line: $0.line,
+                ruleID: $0.ruleID
+            )
         })
 
         onDiagnostics?(currentFileURL, result)

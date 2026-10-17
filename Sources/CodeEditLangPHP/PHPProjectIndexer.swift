@@ -94,6 +94,13 @@ public final class PHPProjectIndexer: @unchecked Sendable {
         indexFile(url, force: true)
     }
 
+    /// Clears cached modification times so the next ``buildIndex(at:)`` re-parses (and re-diagnoses) every file.
+    public func reprocessAll() {
+        stateLock.lock()
+        modTimes.removeAll()
+        stateLock.unlock()
+    }
+
     /// Replaces a file's symbols using already-parsed results (e.g. from the edit buffer).
     public func replace(file: URL, with symbols: [SymbolInfo]) {
         index.removeFile(file)
