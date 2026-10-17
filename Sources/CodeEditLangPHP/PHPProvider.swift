@@ -337,15 +337,71 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
     public func codeActions(forRange range: NSRange, textView: TextViewController) async -> [CodeActionInfo] {
         let source = textView.textView.string
         let ns = source as NSString
-        guard let (identifier, _) = Self.identifier(at: range, in: ns), !identifier.isEmpty,
-              !identifier.contains("\\") else {
-            return []
+        let parsed = await PHPParseCache.shared.infoAsync(for: currentFileURL, source: source)
+        let lineStarts = PHPDiagnosticsEngine.lineStartOffsets(in: source)
+        let cursorLine = PHPDiagnosticsEngine.lineNumber(for: range.location, in: lineStarts)
+
+        var actions: [CodeActionInfo] = []
+
+        // 1. Add `declare(strict_types=1);` (offered near the top of a file that's missing it).
+        if cursorLine <= 2, source.contains("<?php"), !Self.hasStrictTypes(source) {
+            let offset = Self.phpOpenTagEnd(in: source)
+            actions.append(
+                CodeActionInfo(
+                    title: "Add 'declare(strict_types=1);'",
+                    kind: "quickfix",
+                    edits: [
+                        CodeActionEdit(range: NSRange(location: offset, length: 0), text: "declare(strict_types=1);\n")
+                    ]
+                )
+            )
         }
 
-        let parsed = await PHPParseCache.shared.infoAsync(for: currentFileURL, source: source)
-        // Already imported by this short name.
-        if parsed.aliases[identifier] != nil { return [] }
+        // 2. Strict comparison for a loose operator at the cursor.
+        for operatorRange in parsed.looseComparisons
+        where range.location >= operatorRange.location - 1
+            && range.location <= operatorRange.location + operatorRange.length {
+            let op = ns.substring(with: operatorRange)
+            let strict = op == "==" ? "===" : "!=="
+            actions.append(
+                CodeActionInfo(
+                    title: "Replace '\(op)' with '\(strict)'",
+                    kind: "quickfix",
+                    edits: [CodeActionEdit(range: operatorRange, text: strict)]
+                )
+            )
+            break
+        }
 
+        // 3. Remove an unused import on the cursor's line.
+        for unused in parsed.unusedImports
+        where PHPDiagnosticsEngine.lineNumber(for: unused.range.location, in: lineStarts) == cursorLine {
+            let lineRange = Self.fullLineRange(containing: unused.range, in: ns)
+            actions.append(
+                CodeActionInfo(
+                    title: "Remove unused import '\(unused.name)'",
+                    kind: "quickfix",
+                    edits: [CodeActionEdit(range: lineRange, text: "")]
+                )
+            )
+        }
+
+        // 4. Import an unresolved identifier.
+        if let (identifier, _) = Self.identifier(at: range, in: ns),
+           !identifier.isEmpty, !identifier.contains("\\"), parsed.aliases[identifier] == nil {
+            actions.append(contentsOf: importActions(identifier: identifier, parsed: parsed, source: source))
+        }
+
+        return actions
+    }
+
+    /// Quick fixes that import a symbol by its short name.
+    @MainActor
+    private func importActions(
+        identifier: String,
+        parsed: PHPFileSymbols,
+        source: String
+    ) -> [CodeActionInfo] {
         var candidates = index.symbols(named: identifier)
         candidates.append(contentsOf: PHPStubIndex.shared().symbols(named: identifier))
 
@@ -359,11 +415,9 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
             guard !importedFQNs.contains(key), seen.insert(key).inserted else { return false }
             return true
         }
-
         guard !importable.isEmpty else { return [] }
-        let offset = Self.useInsertionOffset(in: source)
-        let editRange = NSRange(location: offset, length: 0)
 
+        let editRange = NSRange(location: Self.useInsertionOffset(in: source), length: 0)
         return importable.map { symbol in
             CodeActionInfo(
                 title: "Import '\(symbol.fullyQualifiedName)'",
@@ -371,6 +425,30 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
                 edits: [CodeActionEdit(range: editRange, text: "use \(symbol.fullyQualifiedName);\n")]
             )
         }
+    }
+
+    /// Whether the source already declares `strict_types=1`.
+    nonisolated static func hasStrictTypes(_ source: String) -> Bool {
+        let head = source.prefix(2000)
+        return head.contains("declare(strict_types=1)") || head.contains("declare(strict_types = 1)")
+    }
+
+    /// Offset just after the `<?php` opening line.
+    nonisolated static func phpOpenTagEnd(in source: String) -> Int {
+        let ns = source as NSString
+        let range = ns.range(of: "<?php")
+        guard range.location != NSNotFound else { return 0 }
+        return endOfLine(after: range.location + range.length, in: ns)
+    }
+
+    /// The full line (including its newline) containing `range`.
+    nonisolated static func fullLineRange(containing range: NSRange, in ns: NSString) -> NSRange {
+        var start = min(max(range.location, 0), ns.length)
+        while start > 0, ns.character(at: start - 1) != 0x0A { start -= 1 }
+        var end = min(range.location + max(range.length, 0), ns.length)
+        while end < ns.length, ns.character(at: end) != 0x0A { end += 1 }
+        if end < ns.length { end += 1 }
+        return NSRange(location: start, length: max(0, end - start))
     }
 
     /// The identifier token at (or immediately before) `range`.
