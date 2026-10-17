@@ -22,7 +22,7 @@ public struct PHPVariableReference: Sendable {
 }
 
 /// The result of parsing a single PHP file.
-public struct PHPFileSymbols {
+public struct PHPFileSymbols: Sendable {
     public var namespace: String?
     /// `use` alias -> fully-qualified class name, e.g. `"User"` -> `"App\\Models\\User"`.
     public var aliases: [String: String] = [:]

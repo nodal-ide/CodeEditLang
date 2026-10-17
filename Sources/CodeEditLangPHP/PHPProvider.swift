@@ -196,7 +196,9 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
     @MainActor
     public func diagnostics(for textView: TextViewController) async -> [EditorDiagnostic] {
         let source = textView.textView.string
-        let info = await PHPParseCache.shared.infoAsync(for: currentFileURL, source: source)
+        let fileURL = currentFileURL
+        let config = diagnosticsConfig
+        let info = await PHPParseCache.shared.infoAsync(for: fileURL, source: source)
         let stubIndex = PHPStubIndex.shared()
 
         let lineStarts = Self.lineStartOffsets(in: source)
@@ -263,13 +265,12 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
             )
         }
 
-        // 6. Code-quality rules (length, complexity, strict types, TODO, …).
-        result.append(contentsOf: PHPDiagnosticsEngine.run(
-            source: source,
-            info: info,
-            fileURL: currentFileURL,
-            settings: diagnosticsConfig
-        ).map {
+        // 6. Code-quality rules (length, complexity, strict types, TODO, …). This is the regex-heavy
+        // part, so run it off the main actor (the engine is pure over Sendable inputs).
+        let quality = await Task.detached(priority: .userInitiated) {
+            PHPDiagnosticsEngine.run(source: source, info: info, fileURL: fileURL, settings: config)
+        }.value
+        result.append(contentsOf: quality.map {
             EditorDiagnostic(
                 range: $0.range,
                 severity: $0.severity,
@@ -279,7 +280,7 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
             )
         })
 
-        onDiagnostics?(currentFileURL, result)
+        onDiagnostics?(fileURL, result)
         return result
     }
 
