@@ -9,6 +9,20 @@ import Foundation
 import CodeEditSourceEditor
 import CodeEditLang
 
+/// Thread-safe cache of compiled regular expressions used by the diagnostics rules, so hot loops
+/// don't recompile the same pattern per function/parameter.
+enum PHPRegexCache {
+    private static let cache = NSCache<NSString, NSRegularExpression>()
+
+    static func regex(_ pattern: String) -> NSRegularExpression? {
+        let key = pattern as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        cache.setObject(regex, forKey: key)
+        return regex
+    }
+}
+
 /// Configuration for the native PHP diagnostics engine. Injected by the app (which owns user settings).
 public struct PHPDiagnosticsConfig: Sendable {
     public var classLength: Int = 250
@@ -274,12 +288,12 @@ public enum PHPDiagnosticsEngine {
 
     private static func containsVariable(_ name: String, in body: String) -> Bool {
         let pattern = "\\$\(NSRegularExpression.escapedPattern(for: name))\\b"
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return true }
+        guard let regex = PHPRegexCache.regex(pattern) else { return true }
         return regex.firstMatch(in: body, range: NSRange(location: 0, length: (body as NSString).length)) != nil
     }
 
     private static func matches(_ string: String, _ pattern: String) -> Bool {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return true }
+        guard let regex = PHPRegexCache.regex(pattern) else { return true }
         return regex.firstMatch(in: string, range: NSRange(location: 0, length: (string as NSString).length)) != nil
     }
 
@@ -434,7 +448,7 @@ public enum PHPDiagnosticsEngine {
 private extension String {
     /// Number of matches of a regular expression in the receiver.
     func matches(of pattern: String) -> Int {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return 0 }
+        guard let regex = PHPRegexCache.regex(pattern) else { return 0 }
         return regex.numberOfMatches(in: self, range: NSRange(location: 0, length: (self as NSString).length))
     }
 }
