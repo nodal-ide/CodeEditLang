@@ -133,17 +133,7 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
             stubIndex: PHPStubIndex.shared()
         )
         guard let symbol = symbols.first else { return nil }
-
-        var sections: [String] = []
-        if symbol.kind == .function || symbol.kind == .method {
-            sections.append("\(symbol.kind.rawValue) \(symbol.name)(\(symbol.parameters.joined(separator: ", ")))")
-        } else {
-            sections.append("\(symbol.kind.rawValue) \(symbol.fullyQualifiedName)")
-        }
-        if let documentation = symbol.documentation, !documentation.isEmpty {
-            sections.append(documentation)
-        }
-        return HoverInfo(contents: sections.joined(separator: "\n\n"), range: range)
+        return HoverInfo(content: PHPHoverMapper.content(for: symbol), range: range)
     }
 
     // MARK: - SignatureHelpDelegate

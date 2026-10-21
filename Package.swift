@@ -48,7 +48,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CodeEditLangTests",
-            dependencies: ["CodeEditLangPHP"]
+            dependencies: ["CodeEditLangPHP", "CodeEditSourceEditor"]
         ),
     ]
 )
