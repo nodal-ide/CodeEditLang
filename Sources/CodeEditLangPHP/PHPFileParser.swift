@@ -672,9 +672,19 @@ private struct PHPScanner {
         let cleaned = body
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { line -> String in
-                var text = line.trimmingCharacters(in: .whitespaces)
-                if text.hasPrefix("*") { text.removeFirst() }
-                return text.trimmingCharacters(in: .whitespaces)
+                let content = String(line)
+                let leadingTrimmed = content.drop(while: { $0 == " " || $0 == "\t" })
+                var text: String
+                if leadingTrimmed.count < content.count, leadingTrimmed.hasPrefix("*") {
+                    var stripped = leadingTrimmed.dropFirst()
+                    if stripped.hasPrefix(" ") {
+                        stripped = stripped.dropFirst()
+                    }
+                    text = String(stripped)
+                } else {
+                    text = content.trimmingCharacters(in: .whitespaces)
+                }
+                return text.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression)
             }
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
