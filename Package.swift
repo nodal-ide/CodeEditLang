@@ -14,11 +14,20 @@ let package = Package(
     ],
     dependencies: [
         // The editor core the providers plug into (delegates, text controller).
-        .package(path: "../CodeEditSourceEditor"),
+        .package(
+            url: "https://github.com/nodal-ide/CodeEditSourceEditor.git",
+            revision: "d67543ba928cf7f845f2edf3f57e60c732151025"
+        ),
         // The text view (CursorPosition, TextView insertion API).
-        .package(path: "../CodeEditTextView"),
+        .package(
+            url: "https://github.com/nodal-ide/CodeEditTextView.git",
+            revision: "eb9820c2384ce5f6661d29846a147390f6ff538e"
+        ),
         // Tree-sitter grammars + CodeLanguage definitions.
-        .package(path: "../CodeEditLanguages"),
+        .package(
+            url: "https://github.com/nodal-ide/CodeEditLanguages.git",
+            revision: "497fc6a7c5c0042bf3c0d2b907be6b145a963364"
+        ),
     ],
     targets: [
         .target(
