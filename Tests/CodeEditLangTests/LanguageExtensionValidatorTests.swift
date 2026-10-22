@@ -67,12 +67,29 @@ final class LanguageExtensionValidatorTests: XCTestCase {
         extensions: Set<String> = [],
         fileNames: Set<String> = [],
         allowsNativeGrammars: Bool = false,
+        scope: LanguageExtensionPackScope = .global,
         hostVersion: String? = nil
     ) -> LanguageExtensionValidationContext {
         .init(
             known: .init(identifiers: identifiers, extensions: extensions, fileNames: fileNames),
             allowsNativeGrammars: allowsNativeGrammars,
+            scope: scope,
             hostVersion: hostVersion
+        )
+    }
+
+    private func nativeSyntax(
+        id: String = "svelte",
+        path: String = "grammars/libtree-sitter-svelte.dylib",
+        symbol: String = "tree_sitter_svelte",
+        sha256: String? = nil
+    ) -> LanguageExtensionManifest.Contributes.Syntax {
+        .init(
+            id: id,
+            displayName: "Svelte",
+            extensions: ["svelte"],
+            grammar: .init(kind: "native", path: path, symbol: symbol, sha256: sha256),
+            queries: .init(highlights: "queries/highlights.scm")
         )
     }
 
@@ -219,6 +236,93 @@ final class LanguageExtensionValidatorTests: XCTestCase {
         )
         XCTAssertFalse(result.isValid)
         XCTAssertTrue(result.errors.contains { $0.message.contains("Native grammar packs are not supported") })
+    }
+
+    func testNativeGrammarPassesWhenAllowedGlobally() throws {
+        try write("(comment) @comment\n", to: "queries/highlights.scm")
+        try write("", to: "grammars/libtree-sitter-svelte.dylib")
+        let result = LanguageExtensionValidator.validate(
+            manifest: manifest(syntax: [nativeSyntax()]),
+            root: directory,
+            context: context(allowsNativeGrammars: true)
+        )
+        XCTAssertTrue(result.isValid, "Unexpected errors: \(result.errors.map(\.description))")
+    }
+
+    func testNativeGrammarIsRejectedInWorkspacePack() throws {
+        try write("(comment) @comment\n", to: "queries/highlights.scm")
+        try write("", to: "grammars/libtree-sitter-svelte.dylib")
+        let result = LanguageExtensionValidator.validate(
+            manifest: manifest(syntax: [nativeSyntax()]),
+            root: directory,
+            context: context(allowsNativeGrammars: true, scope: .workspace)
+        )
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors.contains { $0.message.contains("globally installed extensions") })
+    }
+
+    func testNativeGrammarRejectsNonDylibPath() throws {
+        try write("(comment) @comment\n", to: "queries/highlights.scm")
+        try write("", to: "grammars/libtree-sitter-svelte.so")
+        let result = LanguageExtensionValidator.validate(
+            manifest: manifest(syntax: [nativeSyntax(path: "grammars/libtree-sitter-svelte.so")]),
+            root: directory,
+            context: context(allowsNativeGrammars: true)
+        )
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors.contains { $0.message.contains("must be a `.dylib`") })
+    }
+
+    func testNativeGrammarRejectsInvalidSymbol() throws {
+        try write("(comment) @comment\n", to: "queries/highlights.scm")
+        try write("", to: "grammars/libtree-sitter-svelte.dylib")
+        let result = LanguageExtensionValidator.validate(
+            manifest: manifest(syntax: [nativeSyntax(symbol: "svelte_grammar")]),
+            root: directory,
+            context: context(allowsNativeGrammars: true)
+        )
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors.contains { $0.message.contains("exported `tree_sitter_*` symbol") })
+    }
+
+    func testNativeGrammarRejectsMalformedSHA256() throws {
+        try write("(comment) @comment\n", to: "queries/highlights.scm")
+        try write("", to: "grammars/libtree-sitter-svelte.dylib")
+        let result = LanguageExtensionValidator.validate(
+            manifest: manifest(syntax: [nativeSyntax(sha256: "not-a-hash")]),
+            root: directory,
+            context: context(allowsNativeGrammars: true)
+        )
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors.contains { $0.message.contains("64 lowercase hex") })
+    }
+
+    func testCommentBlockMustBeAPair() throws {
+        try write("(comment) @comment\n", to: "queries/highlights.scm")
+        let syntax = LanguageExtensionManifest.Contributes.Syntax(
+            id: "civet",
+            displayName: "Civet",
+            extensions: ["civet"],
+            grammar: .init(kind: "builtin", name: "html"),
+            queries: .init(highlights: "queries/highlights.scm"),
+            comments: .init(line: "", block: ["<!--"])
+        )
+        let result = LanguageExtensionValidator.validate(
+            manifest: manifest(syntax: [syntax]), root: directory, context: context()
+        )
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors.contains { $0.message.contains("Comment `block` must be a pair") })
+    }
+
+    func testNativeGrammarRejectsMissingFile() throws {
+        try write("(comment) @comment\n", to: "queries/highlights.scm")
+        let result = LanguageExtensionValidator.validate(
+            manifest: manifest(syntax: [nativeSyntax()]),
+            root: directory,
+            context: context(allowsNativeGrammars: true)
+        )
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors.contains { $0.message.contains("Native grammar not found") })
     }
 
     func testCompatibleEngineRequirementPasses() throws {

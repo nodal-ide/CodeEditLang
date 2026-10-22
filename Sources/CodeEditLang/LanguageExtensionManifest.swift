@@ -113,8 +113,8 @@ public struct LanguageExtensionManifest: Codable {
             self.knowledge = knowledge
         }
 
-        /// A declarative syntax contribution. This phase supports query-only packs backed by a
-        /// grammar that is already bundled with CodeEdit.
+        /// A declarative syntax contribution: queries plus either a built-in grammar reference or a
+        /// native grammar dylib shipped in the pack.
         public struct Syntax: Codable {
             /// The document language identifier.
             public var id: String
@@ -126,6 +126,7 @@ public struct LanguageExtensionManifest: Codable {
             public var grammar: Grammar
             public var queries: Queries
             public var aliases: [String]?
+            public var comments: Comments?
 
             public init(
                 id: String,
@@ -136,7 +137,8 @@ public struct LanguageExtensionManifest: Codable {
                 firstLinePatterns: [String]? = nil,
                 grammar: Grammar,
                 queries: Queries,
-                aliases: [String]? = nil
+                aliases: [String]? = nil,
+                comments: Comments? = nil
             ) {
                 self.id = id
                 self.displayName = displayName
@@ -147,22 +149,42 @@ public struct LanguageExtensionManifest: Codable {
                 self.grammar = grammar
                 self.queries = queries
                 self.aliases = aliases
+                self.comments = comments
+            }
+
+            public struct Comments: Codable {
+                public var line: String?
+                public var block: [String]?
+
+                public init(line: String? = nil, block: [String]? = nil) {
+                    self.line = line
+                    self.block = block
+                }
             }
 
             public struct Grammar: Codable {
                 public var kind: String
                 /// Built-in grammar name, for example `json` or `html`.
                 public var name: String?
-                /// Native grammar path. Reserved for the native grammar phase.
+                /// Native grammar path, relative to the pack root.
                 public var path: String?
-                /// Native grammar symbol. Reserved for the native grammar phase.
+                /// Exported `tree_sitter_*` symbol of the native grammar.
                 public var symbol: String?
+                /// Lowercase hex SHA-256 of the native grammar binary, when the author pins one.
+                public var sha256: String?
 
-                public init(kind: String, name: String? = nil, path: String? = nil, symbol: String? = nil) {
+                public init(
+                    kind: String,
+                    name: String? = nil,
+                    path: String? = nil,
+                    symbol: String? = nil,
+                    sha256: String? = nil
+                ) {
                     self.kind = kind
                     self.name = name
                     self.path = path
                     self.symbol = symbol
+                    self.sha256 = sha256
                 }
             }
 

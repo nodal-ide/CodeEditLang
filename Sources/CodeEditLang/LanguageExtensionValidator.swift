@@ -97,13 +97,19 @@ public struct LanguageExtensionKnownLanguages: Sendable {
     public static let empty = LanguageExtensionKnownLanguages()
 }
 
+/// Where a pack was installed from. Only globally installed packs may load native grammars.
+public enum LanguageExtensionPackScope: String, Sendable {
+    case global
+    case workspace
+}
+
 /// Options controlling how strictly a pack is validated.
 public struct LanguageExtensionValidationContext: Sendable {
     public var known: LanguageExtensionKnownLanguages
-    /// Whether native grammar packs may be accepted. Off until the native grammar phase, so this
-    /// build rejects native grammars with an actionable error instead of registering a language it
-    /// cannot load.
+    /// Whether this build supports native grammar packs at all.
     public var allowsNativeGrammars: Bool
+    /// The pack's installation scope. Workspace packs are query-only.
+    public var scope: LanguageExtensionPackScope
     /// The running CodeEdit version, when known. Used to enforce `engines.codeedit`; the CLI leaves
     /// it `nil` because it is not running inside the app.
     public var hostVersion: String?
@@ -111,10 +117,12 @@ public struct LanguageExtensionValidationContext: Sendable {
     public init(
         known: LanguageExtensionKnownLanguages = .empty,
         allowsNativeGrammars: Bool = false,
+        scope: LanguageExtensionPackScope = .global,
         hostVersion: String? = nil
     ) {
         self.known = known
         self.allowsNativeGrammars = allowsNativeGrammars
+        self.scope = scope
         self.hostVersion = hostVersion
     }
 
@@ -418,6 +426,7 @@ public enum LanguageExtensionValidator {
                 contribution.grammar, location: location, context: context, paths: paths, into: &issues
             )
             validateQueries(contribution.queries, paths: paths, into: &issues)
+            validateComments(contribution.comments, location: location, into: &issues)
             validateDetection(
                 contribution, location: location, context: context,
                 seenExtensions: &seenExtensions, seenFileNames: &seenFileNames, into: &issues
@@ -479,15 +488,42 @@ public enum LanguageExtensionValidator {
                 ))
                 return
             }
+            guard context.scope == .global else {
+                issues.append(.error(
+                    "Native grammars are only allowed in globally installed extensions; "
+                        + "workspace packs must reuse a built-in grammar.",
+                    at: grammarLocation
+                ))
+                return
+            }
             if let path = grammar.path {
-                validateFile(
+                guard let url = validateFile(
                     path, kind: "Native grammar", required: true, severity: .error, paths: paths, into: &issues
-                )
+                ) else { return }
+                if url.pathExtension.lowercased() != "dylib" {
+                    issues.append(.error(
+                        "Native grammar must be a `.dylib`: \(path)", at: grammarLocation
+                    ))
+                }
             } else {
                 issues.append(.error("Native grammar requires `path`.", at: grammarLocation))
             }
-            if (grammar.symbol ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let symbol = grammar.symbol?.trimmingCharacters(in: .whitespacesAndNewlines) {
+                if symbol.isEmpty {
+                    issues.append(.error("Native grammar requires `symbol`.", at: grammarLocation))
+                } else if !isValidGrammarSymbol(symbol) {
+                    issues.append(.error(
+                        "Native grammar `symbol` must be an exported `tree_sitter_*` symbol: \(symbol)",
+                        at: grammarLocation
+                    ))
+                }
+            } else {
                 issues.append(.error("Native grammar requires `symbol`.", at: grammarLocation))
+            }
+            if let sha256 = grammar.sha256, !isValidSHA256(sha256) {
+                issues.append(.error(
+                    "Native grammar `sha256` must be 64 lowercase hex characters.", at: grammarLocation
+                ))
             }
         default:
             issues.append(.error(
@@ -516,6 +552,21 @@ public enum LanguageExtensionValidator {
                     at: path
                 ))
             }
+        }
+    }
+
+    private static func validateComments(
+        _ comments: LanguageExtensionManifest.Contributes.Syntax.Comments?,
+        location: String,
+        into issues: inout [LanguageExtensionIssue]
+    ) {
+        guard let block = comments?.block else { return }
+        guard block.count == 2, block.allSatisfy({ !$0.isEmpty }) else {
+            issues.append(.error(
+                "Comment `block` must be a pair of non-empty start and end tokens.",
+                at: "\(location).comments.block"
+            ))
+            return
         }
     }
 
@@ -706,6 +757,17 @@ public enum LanguageExtensionValidator {
             return false
         }
         return true
+    }
+
+    /// An exported tree-sitter entry point: `tree_sitter_` + identifier characters only.
+    private static func isValidGrammarSymbol(_ symbol: String) -> Bool {
+        guard symbol.hasPrefix("tree_sitter_") else { return false }
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+        return symbol.unicodeScalars.allSatisfy(allowed.contains)
+    }
+
+    private static func isValidSHA256(_ value: String) -> Bool {
+        value.count == 64 && value.allSatisfy { $0.isHexDigit && !$0.isUppercase }
     }
 
     /// A human-readable description of a manifest decoding failure.

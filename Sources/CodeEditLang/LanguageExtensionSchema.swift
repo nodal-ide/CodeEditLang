@@ -79,7 +79,7 @@ public enum LanguageExtensionSchema {
           "properties": {
             "syntax": {
               "type": "array",
-              "description": "Declarative syntax contributions. This phase supports query-only packs backed by a grammar bundled with CodeEdit.",
+              "description": "Declarative syntax contributions. A contribution reuses a built-in grammar (query-only pack) or names a native grammar dylib shipped in the pack.",
               "items": {
                 "type": "object",
                 "required": ["id", "grammar", "queries"],
@@ -91,14 +91,29 @@ public enum LanguageExtensionSchema {
                   "shebangs": { "type": "array", "items": { "type": "string" } },
                   "firstLinePatterns": { "type": "array", "items": { "type": "string" } },
                   "aliases": { "type": "array", "items": { "type": "string" } },
+                  "comments": {
+                    "type": "object",
+                    "description": "Comment tokens used by toggle-comment. Native packs should declare these; query-only packs inherit the built-in grammar's tokens unless overridden.",
+                    "properties": {
+                      "line": { "type": "string" },
+                      "block": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": { "type": "string" },
+                        "description": "Start and end tokens of a block comment, e.g. [\"<!--\", \"-->\"]."
+                      }
+                    }
+                  },
                   "grammar": {
                     "type": "object",
                     "required": ["kind"],
                     "properties": {
                       "kind": { "type": "string", "enum": ["builtin", "native"] },
                       "name": { "type": "string", "description": "Built-in grammar name, e.g. `html`. Required when kind is `builtin`." },
-                      "path": { "type": "string", "description": "Native grammar path relative to the pack root. Required when kind is `native`." },
-                      "symbol": { "type": "string", "description": "Exported tree-sitter symbol, e.g. tree_sitter_svelte. Required when kind is `native`." }
+                      "path": { "type": "string", "description": "Native grammar path relative to the pack root, ending in `.dylib`. Required when kind is `native`." },
+                      "symbol": { "type": "string", "pattern": "^tree_sitter_[A-Za-z0-9_]+$", "description": "Exported tree-sitter symbol, e.g. tree_sitter_svelte. Required when kind is `native`." },
+                      "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Expected SHA-256 of the native grammar binary. Optional; when present it is verified before loading." }
                     }
                   },
                   "queries": {
