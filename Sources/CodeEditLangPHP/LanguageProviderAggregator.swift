@@ -7,6 +7,7 @@
 
 import Foundation
 import CodeEditSourceEditor
+import CodeEditLanguages
 
 /// Aggregates multiple ``LanguageProvider``s and presents them to the editor as a single
 /// delegate object.
@@ -46,18 +47,43 @@ public final class LanguageProviderAggregator: NSObject {
         super.init()
     }
 
-    private func providers(for textView: TextViewController, at location: Int) -> [any LanguageProvider] {
-        let languageIDs = textView.languageIDs(at: location)
+    private func routedProviders(
+        for textView: TextViewController,
+        at location: Int
+    ) -> [(provider: any LanguageProvider, context: LanguageZoneContext)] {
+        let contexts = textView.languageContexts(at: location)
+        let activeContexts = contexts.isEmpty
+            ? [LanguageZoneContext(languageID: textView.language.id)]
+            : contexts
         var seen = Set<ObjectIdentifier>()
-        var matchingProviders: [any LanguageProvider] = []
-        for languageID in languageIDs {
-            for provider in providersByLanguage[languageID.rawValue] ?? [] {
+        var matchingProviders: [(provider: any LanguageProvider, context: LanguageZoneContext)] = []
+        for context in activeContexts {
+            for provider in providersByLanguage[context.languageID.rawValue] ?? [] {
+                guard Self.shouldRoute(
+                    providerPriority: provider.priority,
+                    context: context,
+                    rootLanguageID: textView.language.id
+                ) else {
+                    continue
+                }
                 if seen.insert(ObjectIdentifier(provider)).inserted {
-                    matchingProviders.append(provider)
+                    matchingProviders.append((provider, context))
                 }
             }
         }
         return matchingProviders
+    }
+
+    private func providers(for textView: TextViewController, at location: Int) -> [any LanguageProvider] {
+        routedProviders(for: textView, at: location).map(\.provider)
+    }
+
+    static func shouldRoute(
+        providerPriority: LanguageProviderPriority,
+        context: LanguageZoneContext,
+        rootLanguageID: LanguageID
+    ) -> Bool {
+        providerPriority != .lsp || (context.depth == 0 && context.languageID == rootLanguageID)
     }
 
     private func rootProviders(for textView: TextViewController) -> [any LanguageProvider] {
@@ -196,8 +222,11 @@ extension LanguageProviderAggregator: CodeActionDelegate {
     @MainActor
     public func codeActions(forRange range: NSRange, textView: TextViewController) async -> [CodeActionInfo] {
         var actions: [CodeActionInfo] = []
-        for provider in providers(for: textView, at: range.location) {
-            actions.append(contentsOf: await provider.codeActions(forRange: range, textView: textView))
+        for (provider, context) in routedProviders(for: textView, at: range.location) {
+            actions.append(contentsOf: await provider.codeActions(forRange: range, textView: textView).map {
+                guard $0.languageContext == nil else { return $0 }
+                return CodeActionInfo(title: $0.title, kind: $0.kind, edits: $0.edits, languageContext: context)
+            })
         }
         return actions
     }
@@ -263,8 +292,19 @@ extension LanguageProviderAggregator: DiagnosticsDelegate {
     @MainActor
     public func diagnostics(for textView: TextViewController) async -> [EditorDiagnostic] {
         var diagnostics: [EditorDiagnostic] = []
+        let rootContext = LanguageZoneContext(languageID: textView.language.id)
         for provider in rootProviders(for: textView) {
-            diagnostics.append(contentsOf: await provider.diagnostics(for: textView))
+            diagnostics.append(contentsOf: await provider.diagnostics(for: textView).map {
+                guard $0.languageContext == nil else { return $0 }
+                return EditorDiagnostic(
+                    range: $0.range,
+                    severity: $0.severity,
+                    message: $0.message,
+                    line: $0.line,
+                    ruleID: $0.ruleID,
+                    languageContext: rootContext
+                )
+            })
         }
         return diagnostics
     }
@@ -276,8 +316,12 @@ extension LanguageProviderAggregator: SymbolsDelegate {
     @MainActor
     public func documentSymbols(for textView: TextViewController) async -> [EditorSymbol] {
         var symbols: [EditorSymbol] = []
+        let rootContext = LanguageZoneContext(languageID: textView.language.id)
         for provider in rootProviders(for: textView) {
-            symbols.append(contentsOf: await provider.documentSymbols(for: textView))
+            symbols.append(contentsOf: await provider.documentSymbols(for: textView).map {
+                guard $0.languageContext == nil else { return $0 }
+                return EditorSymbol(name: $0.name, detail: $0.detail, position: $0.position, languageContext: rootContext)
+            })
         }
         return symbols
     }
