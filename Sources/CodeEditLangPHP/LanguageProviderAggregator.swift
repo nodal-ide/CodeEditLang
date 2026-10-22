@@ -48,7 +48,16 @@ public final class LanguageProviderAggregator: NSObject {
 
     private func providers(for textView: TextViewController, at location: Int) -> [any LanguageProvider] {
         let languageIDs = textView.languageIDs(at: location)
-        return languageIDs.flatMap { providersByLanguage[$0.rawValue] ?? [] }
+        var seen = Set<ObjectIdentifier>()
+        var matchingProviders: [any LanguageProvider] = []
+        for languageID in languageIDs {
+            for provider in providersByLanguage[languageID.rawValue] ?? [] {
+                if seen.insert(ObjectIdentifier(provider)).inserted {
+                    matchingProviders.append(provider)
+                }
+            }
+        }
+        return matchingProviders
     }
 
     private func rootProviders(for textView: TextViewController) -> [any LanguageProvider] {
