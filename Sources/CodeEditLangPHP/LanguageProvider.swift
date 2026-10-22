@@ -46,12 +46,16 @@ public protocol LanguageProvider: AnyObject,
     /// The language this provider serves, e.g. `"php"`.
     var languageID: String { get }
 
+    /// All language zones this provider can serve. Defaults to the root language above.
+    var supportedLanguageIDs: Set<String> { get }
+
     /// Merge priority. See ``LanguageProviderPriority``.
     var priority: LanguageProviderPriority { get }
 }
 
 public extension LanguageProvider {
     var priority: LanguageProviderPriority { .internalLanguage }
+    var supportedLanguageIDs: Set<String> { [languageID] }
 
     /// Providers opt into inlay hints by overriding this. Default: none.
     @MainActor

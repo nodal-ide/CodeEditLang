@@ -23,6 +23,7 @@ import CodeEditSourceEditor
 public final class LanguageProviderAggregator: NSObject {
     /// Providers sorted by descending priority.
     private let providers: [any LanguageProvider]
+    private let providersByLanguage: [String: [any LanguageProvider]]
 
     /// The provider that produced the current completion session’s items.
     private var activeCompletionProvider: (any LanguageProvider)?
@@ -31,11 +32,29 @@ public final class LanguageProviderAggregator: NSObject {
 
     public init(providers: [any LanguageProvider]) {
         var seen = Set<ObjectIdentifier>()
-        self.providers = providers
+        let orderedProviders = providers
             .filter { seen.insert(ObjectIdentifier($0)).inserted }
             .sorted { $0.priority > $1.priority }
+        self.providers = orderedProviders
+        var providersByLanguage: [String: [any LanguageProvider]] = [:]
+        for provider in orderedProviders {
+            for languageID in provider.supportedLanguageIDs {
+                providersByLanguage[languageID, default: []].append(provider)
+            }
+        }
+        self.providersByLanguage = providersByLanguage
         super.init()
     }
+
+    private func providers(for textView: TextViewController, at location: Int) -> [any LanguageProvider] {
+        let languageIDs = textView.languageIDs(at: location)
+        return languageIDs.flatMap { providersByLanguage[$0.rawValue] ?? [] }
+    }
+
+    private func rootProviders(for textView: TextViewController) -> [any LanguageProvider] {
+        providersByLanguage[textView.language.id.rawValue] ?? []
+    }
+
 }
 
 // MARK: - CodeSuggestionDelegate
@@ -51,7 +70,7 @@ extension LanguageProviderAggregator: CodeSuggestionDelegate {
         textView: TextViewController,
         cursorPosition: CursorPosition
     ) async -> (windowPosition: CursorPosition, items: [CodeSuggestionEntry])? {
-        for provider in providers {
+        for provider in providers(for: textView, at: cursorPosition.range.location) {
             if let result = await provider.completionSuggestionsRequested(
                 textView: textView,
                 cursorPosition: cursorPosition
@@ -69,7 +88,14 @@ extension LanguageProviderAggregator: CodeSuggestionDelegate {
         textView: TextViewController,
         cursorPosition: CursorPosition
     ) -> [CodeSuggestionEntry]? {
-        activeCompletionProvider?.completionOnCursorMove(textView: textView, cursorPosition: cursorPosition)
+        guard let activeCompletionProvider,
+              providers(for: textView, at: cursorPosition.range.location).contains(
+                where: { ObjectIdentifier($0) == ObjectIdentifier(activeCompletionProvider) }
+              ) else {
+            self.activeCompletionProvider = nil
+            return nil
+        }
+        return activeCompletionProvider.completionOnCursorMove(textView: textView, cursorPosition: cursorPosition)
     }
 
     @MainActor
@@ -104,7 +130,7 @@ extension LanguageProviderAggregator: JumpToDefinitionDelegate {
         forRange range: NSRange,
         textView: TextViewController
     ) async -> [JumpToDefinitionLink]? {
-        for provider in providers {
+        for provider in providers(for: textView, at: range.location) {
             if let links = await provider.queryLinks(forRange: range, textView: textView), !links.isEmpty {
                 activeDefinitionProvider = provider
                 return links
@@ -124,7 +150,7 @@ extension LanguageProviderAggregator: JumpToDefinitionDelegate {
 extension LanguageProviderAggregator: HoverDelegate {
     @MainActor
     public func hoverInfo(forRange range: NSRange, textView: TextViewController) async -> HoverInfo? {
-        for provider in providers {
+        for provider in providers(for: textView, at: range.location) {
             if let info = await provider.hoverInfo(forRange: range, textView: textView) {
                 return info
             }
@@ -142,7 +168,7 @@ extension LanguageProviderAggregator: SignatureHelpDelegate {
         argumentIndex: Int,
         textView: TextViewController
     ) async -> SignatureHelpInfo? {
-        for provider in providers {
+        for provider in providers(for: textView, at: calleeRange.location) {
             if let info = await provider.signatureHelp(
                 calleeRange: calleeRange,
                 argumentIndex: argumentIndex,
@@ -161,7 +187,7 @@ extension LanguageProviderAggregator: CodeActionDelegate {
     @MainActor
     public func codeActions(forRange range: NSRange, textView: TextViewController) async -> [CodeActionInfo] {
         var actions: [CodeActionInfo] = []
-        for provider in providers {
+        for provider in providers(for: textView, at: range.location) {
             actions.append(contentsOf: await provider.codeActions(forRange: range, textView: textView))
         }
         return actions
@@ -178,7 +204,7 @@ extension LanguageProviderAggregator: InlayHintDelegate {
     ) async -> [EditorInlayHint] {
         // Inlay hints are additive but mixing providers would duplicate/conflict, so the
         // highest-priority provider with hints for the range wins.
-        for provider in providers {
+        for provider in providers(for: textView, at: range.location) {
             let hints = await provider.inlayHints(forVisibleRange: range, textView: textView)
             if !hints.isEmpty {
                 return hints
@@ -194,7 +220,7 @@ extension LanguageProviderAggregator: FoldRangeDelegate {
     @MainActor
     public func foldRanges(for textView: TextViewController) async -> [EditorFoldRange] {
         // Folding ranges are document-wide; prefer the highest-priority provider that has any.
-        for provider in providers {
+        for provider in rootProviders(for: textView) {
             let ranges = await provider.foldRanges(for: textView)
             if !ranges.isEmpty {
                 return ranges
@@ -212,7 +238,7 @@ extension LanguageProviderAggregator: DocumentHighlightDelegate {
         at position: CursorPosition,
         textView: TextViewController
     ) async -> [EditorDocumentHighlight] {
-        for provider in providers {
+        for provider in providers(for: textView, at: position.range.location) {
             let highlights = await provider.documentHighlights(at: position, textView: textView)
             if !highlights.isEmpty {
                 return highlights
@@ -228,7 +254,7 @@ extension LanguageProviderAggregator: DiagnosticsDelegate {
     @MainActor
     public func diagnostics(for textView: TextViewController) async -> [EditorDiagnostic] {
         var diagnostics: [EditorDiagnostic] = []
-        for provider in providers {
+        for provider in rootProviders(for: textView) {
             diagnostics.append(contentsOf: await provider.diagnostics(for: textView))
         }
         return diagnostics
@@ -241,7 +267,7 @@ extension LanguageProviderAggregator: SymbolsDelegate {
     @MainActor
     public func documentSymbols(for textView: TextViewController) async -> [EditorSymbol] {
         var symbols: [EditorSymbol] = []
-        for provider in providers {
+        for provider in rootProviders(for: textView) {
             symbols.append(contentsOf: await provider.documentSymbols(for: textView))
         }
         return symbols
