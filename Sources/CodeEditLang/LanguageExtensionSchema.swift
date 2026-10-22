@@ -17,7 +17,7 @@ public enum LanguageExtensionSchema {
     public static let json = #"""
     {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "https://raw.githubusercontent.com/upperdo/CodeEditLang/master/Schema/language-extension.schema.json",
+      "$id": "https://raw.githubusercontent.com/nodal-ide/CodeEditLang/master/Schema/language-extension.schema.json",
       "title": "CodeEdit Language Extension",
       "type": "object",
       "required": ["id", "name"],

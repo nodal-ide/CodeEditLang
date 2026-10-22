@@ -14,8 +14,8 @@
 import Foundation
 import CodeEditLang
 
-/// Raw URL of the published JSON schema (hosted in this repo, our fork).
-let rawSchemaURL = "https://raw.githubusercontent.com/upperdo/CodeEditLang/master/Schema/language-extension.schema.json"
+/// Raw URL of the published JSON schema.
+let rawSchemaURL = "https://raw.githubusercontent.com/nodal-ide/CodeEditLang/master/Schema/language-extension.schema.json"
 
 // MARK: - Entry point
 
