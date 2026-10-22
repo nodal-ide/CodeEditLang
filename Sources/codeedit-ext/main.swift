@@ -34,7 +34,7 @@ func main() {
     case "pack":
         runPack(Array(arguments.dropFirst()))
     case "schema":
-        print(schemaJSON)
+        print(LanguageExtensionSchema.json)
     case "help", "-h", "--help":
         printUsage()
     default:
@@ -106,14 +106,8 @@ func runValidate(_ args: [String]) {
     }
     let directory = URL(fileURLWithPath: directoryArgument, isDirectory: true)
 
-    var errors: [String] = []
-    var warnings: [String] = []
-
     let manifestURL = directory.appending(path: "extension.json")
-    let data: Data
-    do {
-        data = try Data(contentsOf: manifestURL)
-    } catch {
+    guard let data = try? Data(contentsOf: manifestURL) else {
         fail("No extension.json found in \(directory.path).")
     }
 
@@ -121,62 +115,18 @@ func runValidate(_ args: [String]) {
     do {
         manifest = try JSONDecoder().decode(LanguageExtensionManifest.self, from: data)
     } catch {
-        fail("extension.json is invalid: \(describe(error))")
+        fail("extension.json is invalid: \(LanguageExtensionValidator.describe(error))")
     }
 
-    if manifest.id.isEmpty { errors.append("`id` must not be empty.") }
-    if !manifest.id.contains(".") { warnings.append("`id` should be a reverse-DNS id, e.g. com.example.pack.") }
-    if manifest.name.isEmpty { errors.append("`name` must not be empty.") }
-    if let schemaVersion = manifest.schemaVersion, schemaVersion != 1 {
-        warnings.append("Unknown `schemaVersion` \(schemaVersion); expected 1.")
-    }
+    // The app validates with the same rules plus its built-in language catalog; the CLI has no
+    // grammar knowledge, so it only reports structural issues.
+    let result = LanguageExtensionValidator.validate(manifest: manifest, root: directory)
 
-    if let url = manifest.url, URL(string: url) == nil {
-        warnings.append("`url` is not a valid URL: \(url).")
-    }
-    if let icon = manifest.icon,
-       !FileManager.default.fileExists(atPath: directory.appending(path: icon).path) {
-        warnings.append("`icon` file not found: \(icon).")
-    }
+    for warning in result.warnings { print("warning: \(warning.description)") }
+    for error in result.errors { print("error: \(error.description)") }
 
-    if let files = manifest.activation?.files {
-        for pattern in files where pattern.contains("*") || pattern.contains("?") {
-            warnings.append("`activation.files` pattern '\(pattern)' contains a wildcard and will be ignored.")
-        }
-    }
-
-    let languages = manifest.languages ?? []
-    if languages.isEmpty { warnings.append("No `languages` declared — the pack will never activate.") }
-
-    let symbolFiles = manifest.contributes?.symbols ?? []
-    let hasProvider = manifest.contributes?.provider != nil
-    if symbolFiles.isEmpty && !hasProvider {
-        warnings.append("No `contributes.symbols` or `contributes.provider` — the extension contributes nothing.")
-    }
-    for file in symbolFiles {
-        let url = directory.appending(path: file)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            errors.append("Symbol file not found: \(file)")
-            continue
-        }
-        do {
-            let pack = try JSONDecoder().decode(LanguageSymbolPack.self, from: Data(contentsOf: url))
-            if pack.symbols.isEmpty {
-                warnings.append("Symbol file has no symbols: \(file)")
-            }
-            for symbol in pack.symbols where symbol.name.isEmpty {
-                errors.append("A symbol in \(file) has an empty name.")
-            }
-        } catch {
-            errors.append("Symbol file \(file) is invalid: \(describe(error))")
-        }
-    }
-
-    for warning in warnings { print("warning: \(warning)") }
-    for error in errors { print("error: \(error)") }
-
-    if errors.isEmpty {
-        print("✓ \(manifest.name) is valid\(warnings.isEmpty ? "" : " (with warnings)").")
+    if result.isValid {
+        print("✓ \(manifest.name) is valid\(result.warnings.isEmpty ? "" : " (with warnings)").")
         exit(0)
     }
     exit(1)
@@ -241,22 +191,6 @@ func writeManifest(_ manifest: LanguageExtensionManifest, to url: URL) throws {
     object["$schema"] = rawSchemaURL
     let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
     try data.write(to: url)
-}
-
-func describe(_ error: Error) -> String {
-    if let decodingError = error as? DecodingError {
-        switch decodingError {
-        case .keyNotFound(let key, _):
-            return "missing key '\(key.stringValue)'"
-        case .typeMismatch(_, let context):
-            return "type mismatch at \(context.codingPath.map(\.stringValue).joined(separator: "."))"
-        case .dataCorrupted(let context):
-            return "data corrupted at \(context.codingPath.map(\.stringValue).joined(separator: "."))"
-        default:
-            return decodingError.localizedDescription
-        }
-    }
-    return error.localizedDescription
 }
 
 func fail(_ message: String) -> Never {
@@ -335,82 +269,5 @@ func readme(name: String, identifier: String, language: String) -> String {
       (`activation.framework`); wildcards in `files` are ignored.
     """
 }
-
-// MARK: - JSON Schema
-
-let schemaJSON = """
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/upperdo/CodeEditLang/master/Schema/language-extension.schema.json",
-  "title": "CodeEdit Language Extension",
-  "type": "object",
-  "required": ["id", "name"],
-  "properties": {
-    "$schema": { "type": "string", "format": "uri" },
-    "schemaVersion": { "type": "integer", "const": 1 },
-    "id": { "type": "string", "minLength": 1, "description": "Reverse-DNS identifier, e.g. com.example.pack." },
-    "name": { "type": "string", "minLength": 1 },
-    "version": { "type": "string" },
-    "type": { "type": "string", "enum": ["languagePack", "languageProvider", "settings", "sidebar", "theme", "action"] },
-    "description": { "type": "string" },
-    "author": { "type": "string" },
-    "url": { "type": "string", "format": "uri" },
-    "icon": { "type": "string", "description": "Path to an image, relative to the pack root." },
-    "languages": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-    "framework": { "type": "string", "description": "Framework this pack targets, e.g. laravel/framework." },
-    "activation": {
-      "type": "object",
-      "properties": {
-        "files": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Literal workspace-relative marker paths. Wildcards are ignored."
-        },
-        "framework": {
-          "type": "object",
-          "properties": {
-            "file": { "type": "string", "default": "composer.json" },
-            "requires": { "type": "object", "additionalProperties": { "type": "string" } }
-          }
-        }
-      }
-    },
-    "contributes": {
-      "type": "object",
-      "properties": {
-        "symbols": { "type": "array", "items": { "type": "string" } },
-        "snippets": { "type": "array", "items": { "type": "string" } },
-        "stubRoots": { "type": "array", "items": { "type": "string" } },
-        "knowledge": {
-          "type": "array",
-          "description": "Offline documentation sets (Markdown/HTML pages + index.json).",
-          "items": {
-            "type": "object",
-            "required": ["id", "title"],
-            "properties": {
-              "id": { "type": "string" },
-              "title": { "type": "string" },
-              "root": { "type": "string" },
-              "index": { "type": "string" }
-            }
-          }
-        },
-        "provider": {
-          "type": "object",
-          "description": "An out-of-process language provider spoken to over JSON-RPC on stdio.",
-          "required": ["command"],
-          "properties": {
-            "command": { "type": "string", "description": "Executable (path resolved relative to the pack root, or a PATH name)." },
-            "args": { "type": "array", "items": { "type": "string" } },
-            "languages": { "type": "array", "items": { "type": "string" } },
-            "env": { "type": "object", "additionalProperties": { "type": "string" } }
-          }
-        }
-      }
-    }
-  },
-  "additionalProperties": true
-}
-"""
 
 main()

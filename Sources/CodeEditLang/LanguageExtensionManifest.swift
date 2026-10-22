@@ -20,11 +20,13 @@ public struct LanguageExtensionManifest: Codable {
     public var icon: String?
     public var languages: [String]?
     public var framework: String?
+    public var engines: Engines?
+    public var capabilities: [String]?
     public var activation: Activation?
     public var contributes: Contributes?
 
     public init(
-        schemaVersion: Int? = 1,
+        schemaVersion: Int? = 2,
         id: String,
         name: String,
         version: String? = nil,
@@ -35,6 +37,8 @@ public struct LanguageExtensionManifest: Codable {
         icon: String? = nil,
         languages: [String]? = nil,
         framework: String? = nil,
+        engines: Engines? = nil,
+        capabilities: [String]? = nil,
         activation: Activation? = nil,
         contributes: Contributes? = nil
     ) {
@@ -49,8 +53,20 @@ public struct LanguageExtensionManifest: Codable {
         self.icon = icon
         self.languages = languages
         self.framework = framework
+        self.engines = engines
+        self.capabilities = capabilities
         self.activation = activation
         self.contributes = contributes
+    }
+
+    /// Host-version requirements for this pack.
+    public struct Engines: Codable {
+        /// A semver-style requirement such as `>=0.18.0` or `^0.18.0`.
+        public var codeedit: String?
+
+        public init(codeedit: String? = nil) {
+            self.codeedit = codeedit
+        }
     }
 
     public struct Activation: Codable {
@@ -74,6 +90,7 @@ public struct LanguageExtensionManifest: Codable {
     }
 
     public struct Contributes: Codable {
+        public var syntax: [Syntax]?
         public var symbols: [String]?
         public var snippets: [String]?
         public var stubRoots: [String]?
@@ -81,17 +98,119 @@ public struct LanguageExtensionManifest: Codable {
         public var knowledge: [Knowledge]?
 
         public init(
+            syntax: [Syntax]? = nil,
             symbols: [String]? = nil,
             snippets: [String]? = nil,
             stubRoots: [String]? = nil,
             provider: Provider? = nil,
             knowledge: [Knowledge]? = nil
         ) {
+            self.syntax = syntax
             self.symbols = symbols
             self.snippets = snippets
             self.stubRoots = stubRoots
             self.provider = provider
             self.knowledge = knowledge
+        }
+
+        /// A declarative syntax contribution. This phase supports query-only packs backed by a
+        /// grammar that is already bundled with CodeEdit.
+        public struct Syntax: Codable {
+            /// The document language identifier.
+            public var id: String
+            public var displayName: String?
+            public var extensions: [String]?
+            public var filenames: [String]?
+            public var shebangs: [String]?
+            public var firstLinePatterns: [String]?
+            public var grammar: Grammar
+            public var queries: Queries
+            public var aliases: [String]?
+
+            public init(
+                id: String,
+                displayName: String? = nil,
+                extensions: [String]? = nil,
+                filenames: [String]? = nil,
+                shebangs: [String]? = nil,
+                firstLinePatterns: [String]? = nil,
+                grammar: Grammar,
+                queries: Queries,
+                aliases: [String]? = nil
+            ) {
+                self.id = id
+                self.displayName = displayName
+                self.extensions = extensions
+                self.filenames = filenames
+                self.shebangs = shebangs
+                self.firstLinePatterns = firstLinePatterns
+                self.grammar = grammar
+                self.queries = queries
+                self.aliases = aliases
+            }
+
+            public struct Grammar: Codable {
+                public var kind: String
+                /// Built-in grammar name, for example `json` or `html`.
+                public var name: String?
+                /// Native grammar path. Reserved for the native grammar phase.
+                public var path: String?
+                /// Native grammar symbol. Reserved for the native grammar phase.
+                public var symbol: String?
+
+                public init(kind: String, name: String? = nil, path: String? = nil, symbol: String? = nil) {
+                    self.kind = kind
+                    self.name = name
+                    self.path = path
+                    self.symbol = symbol
+                }
+            }
+
+            public struct Queries: Codable {
+                public var highlights: String
+                public var injections: String?
+                public var folds: String?
+                public var indents: String?
+                public var locals: String?
+                public var tags: String?
+                public var parent: String?
+
+                public init(
+                    highlights: String,
+                    injections: String? = nil,
+                    folds: String? = nil,
+                    indents: String? = nil,
+                    locals: String? = nil,
+                    tags: String? = nil,
+                    parent: String? = nil
+                ) {
+                    self.highlights = highlights
+                    self.injections = injections
+                    self.folds = folds
+                    self.indents = indents
+                    self.locals = locals
+                    self.tags = tags
+                    self.parent = parent
+                }
+
+                public var allPaths: [String] {
+                    [
+                        highlights, injections, folds, indents, locals, tags, parent
+                    ].compactMap { $0 }
+                }
+
+                /// The declared query files paired with their query name, in a deterministic order.
+                public var namedPaths: [(name: String, path: String)] {
+                    var result: [(name: String, path: String)] = [("highlights", highlights)]
+                    if let injections { result.append(("injections", injections)) }
+                    if let folds { result.append(("folds", folds)) }
+                    if let indents { result.append(("indents", indents)) }
+                    if let locals { result.append(("locals", locals)) }
+                    if let tags { result.append(("tags", tags)) }
+                    if let parent { result.append(("parent", parent)) }
+                    return result
+                }
+            }
         }
 
         /// An offline documentation set (Markdown/HTML pages + an `index.json`).

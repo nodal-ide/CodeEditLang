@@ -1,0 +1,156 @@
+import Foundation
+
+/// The canonical JSON Schema for `extension.json` language-extension manifests.
+///
+/// This is the single source of truth shared by the `codeedit-ext` authoring tool (`schema` command)
+/// and the app. The published copy at `CodeEditLang/Schema/language-extension.schema.json` is kept in
+/// sync with this constant by `LanguageExtensionSchemaTests`, so editor tooling that fetches the
+/// `$id` URL still resolves the same document.
+public enum LanguageExtensionSchema {
+    /// The current manifest schema version emitted by `codeedit-ext init`.
+    public static let currentVersion = 2
+
+    /// The manifest schema versions this build understands. Manifests that omit `schemaVersion` are
+    /// treated as v1.
+    public static let supportedVersions: ClosedRange<Int> = 1...2
+
+    public static let json = #"""
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "https://raw.githubusercontent.com/upperdo/CodeEditLang/master/Schema/language-extension.schema.json",
+      "title": "CodeEdit Language Extension",
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "$schema": { "type": "string", "format": "uri" },
+        "schemaVersion": {
+          "type": "integer",
+          "enum": [1, 2],
+          "description": "Manifest schema version. Manifests that omit it are treated as v1."
+        },
+        "id": { "type": "string", "minLength": 1, "pattern": "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._-]*$", "description": "Reverse-DNS identifier, e.g. com.example.pack." },
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["languagePack", "languageProvider", "nativeSyntaxPack", "settings", "sidebar", "theme", "action"]
+        },
+        "description": { "type": "string" },
+        "author": { "type": "string" },
+        "url": { "type": "string", "format": "uri" },
+        "icon": { "type": "string", "description": "Path to an image, relative to the pack root." },
+        "languages": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Document languages this pack targets for provider/symbol contributions."
+        },
+        "framework": { "type": "string", "description": "Framework this pack targets, e.g. laravel/framework." },
+        "engines": {
+          "type": "object",
+          "description": "Host version requirements. `codeedit` accepts a semver range such as `>=0.18.0` or `^0.18.0`.",
+          "properties": { "codeedit": { "type": "string" } },
+          "additionalProperties": true
+        },
+        "capabilities": {
+          "type": "array",
+          "description": "Capabilities the pack needs. `nativeGrammars` requires explicit user consent.",
+          "items": { "type": "string" }
+        },
+        "activation": {
+          "type": "object",
+          "properties": {
+            "files": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Literal workspace-relative marker paths. Wildcards are ignored."
+            },
+            "framework": {
+              "type": "object",
+              "properties": {
+                "file": { "type": "string", "default": "composer.json" },
+                "requires": { "type": "object", "additionalProperties": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "contributes": {
+          "type": "object",
+          "properties": {
+            "syntax": {
+              "type": "array",
+              "description": "Declarative syntax contributions. This phase supports query-only packs backed by a grammar bundled with CodeEdit.",
+              "items": {
+                "type": "object",
+                "required": ["id", "grammar", "queries"],
+                "properties": {
+                  "id": { "type": "string", "minLength": 1, "description": "Document language identifier." },
+                  "displayName": { "type": "string" },
+                  "extensions": { "type": "array", "items": { "type": "string" } },
+                  "filenames": { "type": "array", "items": { "type": "string" } },
+                  "shebangs": { "type": "array", "items": { "type": "string" } },
+                  "firstLinePatterns": { "type": "array", "items": { "type": "string" } },
+                  "aliases": { "type": "array", "items": { "type": "string" } },
+                  "grammar": {
+                    "type": "object",
+                    "required": ["kind"],
+                    "properties": {
+                      "kind": { "type": "string", "enum": ["builtin", "native"] },
+                      "name": { "type": "string", "description": "Built-in grammar name, e.g. `html`. Required when kind is `builtin`." },
+                      "path": { "type": "string", "description": "Native grammar path relative to the pack root. Required when kind is `native`." },
+                      "symbol": { "type": "string", "description": "Exported tree-sitter symbol, e.g. tree_sitter_svelte. Required when kind is `native`." }
+                    }
+                  },
+                  "queries": {
+                    "type": "object",
+                    "required": ["highlights"],
+                    "description": "Query file paths relative to the pack root.",
+                    "properties": {
+                      "highlights": { "type": "string" },
+                      "injections": { "type": "string" },
+                      "folds": { "type": "string" },
+                      "indents": { "type": "string" },
+                      "locals": { "type": "string" },
+                      "tags": { "type": "string" },
+                      "parent": { "type": "string" }
+                    }
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            "symbols": { "type": "array", "items": { "type": "string" } },
+            "snippets": { "type": "array", "items": { "type": "string" } },
+            "stubRoots": { "type": "array", "items": { "type": "string" } },
+            "knowledge": {
+              "type": "array",
+              "description": "Offline documentation sets (Markdown/HTML pages + index.json).",
+              "items": {
+                "type": "object",
+                "required": ["id", "title"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "title": { "type": "string" },
+                  "root": { "type": "string", "description": "Folder inside the pack. Defaults to the pack root." },
+                  "index": { "type": "string", "description": "Index file relative to root. Defaults to index.json." }
+                }
+              }
+            },
+            "provider": {
+              "type": "object",
+              "description": "An out-of-process language provider spoken to over JSON-RPC on stdio.",
+              "required": ["command"],
+              "properties": {
+                "command": { "type": "string", "description": "Executable (path resolved relative to the pack root, or a PATH name)." },
+                "args": { "type": "array", "items": { "type": "string" } },
+                "languages": { "type": "array", "items": { "type": "string" } },
+                "env": { "type": "object", "additionalProperties": { "type": "string" } }
+              }
+            }
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+    """#
+}
