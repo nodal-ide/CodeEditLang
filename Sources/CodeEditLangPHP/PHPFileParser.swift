@@ -455,9 +455,16 @@ private struct PHPScanner {
             "this", "GLOBALS", "_SERVER", "_GET", "_POST", "_FILES", "_COOKIE",
             "_SESSION", "_REQUEST", "_ENV"
         ]
+        
+        // TODO: temp fix for undefined std variables, we have to inveztigate the stubs
+        let stdBuiltins: Set<String> = [
+            "empty", "array_map", "count", "strlen", "is_numeric", "gettype"
+        ]
         var seenVariables = Set<String>()
         let undefined = variableUsages.compactMap { usage -> PHPVariableReference? in
-            guard !declaredVariables.contains(usage.name), !superglobals.contains(usage.name) else { return nil }
+            guard !declaredVariables.contains(usage.name),
+            !superglobals.contains(usage.name),
+            !stdBuiltins.contains(usage.name) else { return nil }
             guard seenVariables.insert("\(usage.name)|\(usage.range.location)").inserted else { return nil }
             return usage
         }
