@@ -262,17 +262,22 @@ public struct LanguageExtensionManifest: Codable {
             public var args: [String]?
             public var languages: [String]?
             public var env: [String: String]?
+            /// Single-character triggers that open the completion window for this provider.
+            /// `nil` preserves the host's legacy PHP-oriented trigger set.
+            public var completionTriggers: [String]?
 
             public init(
                 command: String,
                 args: [String]? = nil,
                 languages: [String]? = nil,
-                env: [String: String]? = nil
+                env: [String: String]? = nil,
+                completionTriggers: [String]? = nil
             ) {
                 self.command = command
                 self.args = args
                 self.languages = languages
                 self.env = env
+                self.completionTriggers = completionTriggers
             }
         }
     }

@@ -147,6 +147,9 @@ public enum LanguageExtensionValidator {
     /// workspace catalog is built, so an unbounded file would let a pack stall the editor.
     static let maximumQueryFileSize = 1_048_576
 
+    /// Guards the per-keystroke trigger lookup against a manifest that declares an excessive set.
+    static let maximumCompletionTriggers = 16
+
     /// Reads and validates the pack at `root` (a directory containing `extension.json`).
     public static func validate(
         packAt root: URL,
@@ -332,6 +335,9 @@ public enum LanguageExtensionValidator {
             if let languages = provider.languages, languages.isEmpty {
                 issues.append(.warning("`contributes.provider.languages` is empty.", at: "contributes.provider"))
             }
+            validateCompletionTriggers(
+                provider.completionTriggers, into: &issues
+            )
         }
 
         let languages = manifest.languages ?? []
@@ -347,6 +353,44 @@ public enum LanguageExtensionValidator {
             issues.append(.warning(
                 "No `contributes.symbols`, `contributes.provider` or `contributes.syntax` — the pack contributes nothing."
             ))
+        }
+    }
+
+    private static func validateCompletionTriggers(
+        _ triggers: [String]?,
+        into issues: inout [LanguageExtensionIssue]
+    ) {
+        guard let triggers else { return }
+        guard !triggers.isEmpty else {
+            issues.append(.warning(
+                "`contributes.provider.completionTriggers` is empty; completion is only available manually.",
+                at: "contributes.provider.completionTriggers"
+            ))
+            return
+        }
+        if triggers.count > maximumCompletionTriggers {
+            issues.append(.error(
+                "At most \(maximumCompletionTriggers) completion triggers are allowed.",
+                at: "contributes.provider.completionTriggers"
+            ))
+        }
+        var seen = Set<String>()
+        for trigger in triggers {
+            guard trigger.count == 1,
+                  !trigger.unicodeScalars.allSatisfy({ CharacterSet.whitespacesAndNewlines.contains($0) })
+            else {
+                issues.append(.error(
+                    "Completion triggers must be non-whitespace single characters (found '\(trigger)').",
+                    at: "contributes.provider.completionTriggers"
+                ))
+                continue
+            }
+            if !seen.insert(trigger).inserted {
+                issues.append(.error(
+                    "Duplicate completion trigger '\(trigger)'.",
+                    at: "contributes.provider.completionTriggers"
+                ))
+            }
         }
     }
 

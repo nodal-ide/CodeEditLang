@@ -45,6 +45,24 @@ final class LanguageExtensionValidatorTests: XCTestCase {
         )
     }
 
+    private func providerManifest(
+        triggers: [String]?
+    ) -> LanguageExtensionManifest {
+        LanguageExtensionManifest(
+            schemaVersion: 2,
+            id: "com.example.swift",
+            name: "Swift",
+            languages: ["swift"],
+            capabilities: ["provider"],
+            contributes: .init(provider: .init(
+                command: "node",
+                args: ["provider.js"],
+                languages: ["swift"],
+                completionTriggers: triggers
+            ))
+        )
+    }
+
     private func queryOnlySyntax(
         id: String = "civet",
         extensions: [String] = ["civet"],
@@ -295,6 +313,26 @@ final class LanguageExtensionValidatorTests: XCTestCase {
         )
         XCTAssertFalse(result.isValid)
         XCTAssertTrue(result.errors.contains { $0.message.contains("64 lowercase hex") })
+    }
+
+    func testProviderCompletionTriggersAcceptSingleCharacters() {
+        let result = LanguageExtensionValidator.validate(
+            manifest: providerManifest(triggers: [".", ":", "@", "#"]),
+            root: directory,
+            context: context()
+        )
+        XCTAssertTrue(result.isValid, "Unexpected errors: \(result.errors.map(\.description))")
+    }
+
+    func testProviderCompletionTriggersRejectInvalidEntries() {
+        let result = LanguageExtensionValidator.validate(
+            manifest: providerManifest(triggers: ["..", ".", ".", " "]),
+            root: directory,
+            context: context()
+        )
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors.contains { $0.message.contains("single characters") })
+        XCTAssertTrue(result.errors.contains { $0.message.contains("Duplicate completion trigger") })
     }
 
     func testCommentBlockMustBeAPair() throws {

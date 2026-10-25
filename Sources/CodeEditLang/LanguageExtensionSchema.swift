@@ -159,7 +159,13 @@ public enum LanguageExtensionSchema {
                 "command": { "type": "string", "description": "Executable (path resolved relative to the pack root, or a PATH name)." },
                 "args": { "type": "array", "items": { "type": "string" } },
                 "languages": { "type": "array", "items": { "type": "string" } },
-                "env": { "type": "object", "additionalProperties": { "type": "string" } }
+                "env": { "type": "object", "additionalProperties": { "type": "string" } },
+                "completionTriggers": {
+                  "type": "array",
+                  "description": "Single-character triggers that open the completion window, e.g. [\".\", \":\"].",
+                  "items": { "type": "string", "minLength": 1, "maxLength": 1 },
+                  "maxItems": 16
+                }
               }
             }
           }

@@ -119,8 +119,14 @@ func runValidate(_ args: [String]) {
     }
 
     // The app validates with the same rules plus its built-in language catalog; the CLI has no
-    // grammar knowledge, so it only reports structural issues.
-    let result = LanguageExtensionValidator.validate(manifest: manifest, root: directory)
+    // grammar knowledge, so it only reports structural issues. Native grammar packs are opt-in
+    // because the catalog-less CLI cannot load or trust a binary.
+    let allowsNativeGrammars = args.contains("--allow-native-grammars")
+    let result = LanguageExtensionValidator.validate(
+        manifest: manifest,
+        root: directory,
+        context: .init(allowsNativeGrammars: allowsNativeGrammars, scope: .global)
+    )
 
     for warning in result.warnings { print("warning: \(warning.description)") }
     for error in result.errors { print("error: \(error.description)") }
@@ -212,6 +218,7 @@ func printUsage() {
         COMMANDS:
           init       Scaffold a new language extension.
           validate   Validate extension.json and its symbol files.
+                     Pass --allow-native-grammars to structurally validate a native syntax pack.
           pack       Zip an extension for installation.
           schema     Print the JSON schema for extension.json.
         """

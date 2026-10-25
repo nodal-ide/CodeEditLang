@@ -1,35 +1,11 @@
 {
   "pins" : [
     {
-      "identity" : "codeeditlanguages",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/nodal-ide/CodeEditLanguages.git",
-      "state" : {
-        "revision" : "497fc6a7c5c0042bf3c0d2b907be6b145a963364"
-      }
-    },
-    {
-      "identity" : "codeeditsourceeditor",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/nodal-ide/CodeEditSourceEditor.git",
-      "state" : {
-        "revision" : "d67543ba928cf7f845f2edf3f57e60c732151025"
-      }
-    },
-    {
       "identity" : "codeeditsymbols",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/nodal-ide/CodeEditSymbols.git",
       "state" : {
         "revision" : "247200521218bc1cc0ec962012c407a5ef8460d7"
-      }
-    },
-    {
-      "identity" : "codeedittextview",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/nodal-ide/CodeEditTextView.git",
-      "state" : {
-        "revision" : "eb9820c2384ce5f6661d29846a147390f6ff538e"
       }
     },
     {
