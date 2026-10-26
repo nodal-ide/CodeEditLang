@@ -31,6 +31,8 @@ public struct PHPFileSymbols: Sendable {
     public var variables: [String] = []
     /// Class-like scopes, for resolving which class the cursor is inside.
     public var scopes: [PHPScope] = []
+    /// Distinct names referenced in the file (functions, methods, classes, traits, aliases) — used for the find-references name index.
+    public var referenceNames: Set<String> = []
     /// Trait names used by each class-like FQN (`class FQN -> [TraitName]`).
     public var classTraits: [String: [String]] = [:]
     /// Ranges of tree-sitter `ERROR`/`MISSING` nodes.
@@ -476,6 +478,7 @@ private struct PHPScanner {
             symbols: symbols,
             variables: variableNames.sorted(),
             scopes: scopes,
+            referenceNames: referencedNames,  // Added for find-references name index
             classTraits: classTraits,
             parseErrors: parseErrors,
             classReferences: classReferences,

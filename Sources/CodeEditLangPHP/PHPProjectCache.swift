@@ -2,16 +2,16 @@
 //  PHPProjectCache.swift
 //  CodeEditLangPHP
 //
-//  On-disk cache of a project's PHP symbols + diagnostics (binary property list).
+//  On-disk cache of a project's PHP symbols + diagnostics + reference index postings (binary property list).
 //
 
 import Foundation
 import CodeEditLang
 
-/// Persisted per-project index + diagnostics, stored at `<project>/.codeedit/cache/php/cache.bin`.
+/// Persisted per-project index + diagnostics + reference index postings, stored at `<project>/.codeedit/cache/php/cache.bin`.
 struct PHPProjectCache: Codable {
     /// Bump when the persisted shape changes to invalidate old caches.
-    static let version = 1
+    static let version = 2
 
     var version: Int = PHPProjectCache.version
     var files: [FileEntry]
@@ -21,6 +21,7 @@ struct PHPProjectCache: Codable {
         var modified: Date
         var symbols: [SymbolInfo]
         var diagnostics: [PHPDiagnostic]
+        var referenceNames: [String]
     }
 
     static func cacheURL(for root: URL) -> URL {

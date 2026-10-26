@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import CodeEditLang
 import CodeEditSourceEditor
 
 /// Priority of a language provider. Higher-priority providers are consulted first for
@@ -31,6 +32,10 @@ public enum LanguageProviderPriority: Int, Comparable, Sendable {
 /// jump-to-definition, hover, signature help, code actions, diagnostics and document symbols
 /// for one language. Register providers in the app and merge them with
 /// ``LanguageProviderAggregator``.
+///
+/// References are a command-driven data capability rather than an editor delegate, so they come from
+/// ``CodeEditLang/ReferenceProviding``. The defaults below keep every existing provider compiling;
+/// a provider that implements `references(for:)` must also override `supportsReferences`.
 public protocol LanguageProvider: AnyObject,
     CodeSuggestionDelegate,
     JumpToDefinitionDelegate,
@@ -41,7 +46,8 @@ public protocol LanguageProvider: AnyObject,
     SymbolsDelegate,
     InlayHintDelegate,
     FoldRangeDelegate,
-    DocumentHighlightDelegate {
+    DocumentHighlightDelegate,
+    ReferenceProviding {
 
     /// The language this provider serves, e.g. `"php"`.
     var languageID: String { get }
@@ -56,6 +62,14 @@ public protocol LanguageProvider: AnyObject,
 public extension LanguageProvider {
     var priority: LanguageProviderPriority { .internalLanguage }
     var supportedLanguageIDs: Set<String> { [languageID] }
+
+    /// Providers opt into find-references by implementing `references(for:)` **and** returning
+    /// `true` here. The aggregator skips providers whose flag is `false` without querying them.
+    var supportsReferences: Bool { false }
+
+    func references(for query: ReferenceQuery) async -> ReferenceQueryOutcome {
+        .unsupported(reason: "Find references isn't supported for \(languageID) yet.")
+    }
 
     /// Providers opt into inlay hints by overriding this. Default: none.
     @MainActor

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CodeEditLang
 import CodeEditSourceEditor
 import CodeEditLanguages
 
@@ -17,6 +18,8 @@ import CodeEditLanguages
 ///   consulting providers in priority order (extension → built-in engine → LSP).
 /// - **Diagnostics, document symbols, code actions:** results are concatenated (these are
 ///   additive lists with no per-item callbacks).
+/// - **References:** the first provider that *answers* wins, including an empty result set; providers
+///   that decline or fail are skipped, so a slower server can't contradict a more specific engine.
 ///
 /// Because completion and definition callbacks (`completionWindowApplyCompletion`,
 /// `openLink`) are routed back by item/link, the aggregator remembers which provider served
@@ -324,5 +327,81 @@ extension LanguageProviderAggregator: SymbolsDelegate {
             })
         }
         return symbols
+    }
+}
+
+// MARK: - ReferenceProviding
+
+extension LanguageProviderAggregator: ReferenceProviding {
+    /// `true` when at least one registered provider can answer references queries.
+    public var supportsReferences: Bool {
+        providers.contains { $0.supportsReferences }
+    }
+
+    /// Routes the query to the providers registered for its language zone, then merges.
+    public func references(for query: ReferenceQuery) async -> ReferenceQueryOutcome {
+        let candidates = providersForReferences(query).map { $0 as any ReferenceProviding }
+        return await Self.mergeReferences(query: query, providers: candidates)
+    }
+
+    /// Providers that may answer this query: registered for the target's language zone, in priority
+    /// order, subject to the same root-zone rule the interactive delegates use for LSP providers.
+    func providersForReferences(_ query: ReferenceQuery) -> [any LanguageProvider] {
+        let rootLanguageID = LanguageID(rawValue: query.rootLanguageID ?? query.languageID)
+        let context = LanguageZoneContext(
+            languageID: LanguageID(rawValue: query.languageID),
+            depth: query.zoneDepth
+        )
+        return (providersByLanguage[query.languageID] ?? []).filter { provider in
+            Self.shouldRoute(
+                providerPriority: provider.priority,
+                context: context,
+                rootLanguageID: rootLanguageID
+            )
+        }
+    }
+
+    /// The merge policy, separated from routing so it can be tested without editor infrastructure.
+    ///
+    /// - Providers are consulted in the given order (highest priority first).
+    /// - `.unsupported` is skipped; `.failed` is remembered and the next provider is tried.
+    /// - The first `.results` outcome wins **even when empty**: an authoritative “none” must stop the
+    ///   search rather than let a lower-priority provider contradict it.
+    /// - Results are defensively capped to `query.maxResults`; truncation clears `isComplete`.
+    static func mergeReferences(
+        query: ReferenceQuery,
+        providers: [any ReferenceProviding]
+    ) async -> ReferenceQueryOutcome {
+        var lastFailure: ReferenceQueryError?
+        var declineReason: String?
+        var sawCapability = false
+
+        for provider in providers {
+            if Task.isCancelled { return .failed(.cancelled) }
+            guard provider.supportsReferences else { continue }
+            sawCapability = true
+
+            switch await provider.references(for: query) {
+            case .results(let references, let isComplete):
+                if Task.isCancelled { return .failed(.cancelled) }
+                let capped = references.count > query.maxResults
+                    ? Array(references.prefix(max(0, query.maxResults)))
+                    : references
+                return .results(capped, isComplete: isComplete && capped.count == references.count)
+            case .unsupported(let reason):
+                if declineReason == nil, !reason.isEmpty { declineReason = reason }
+            case .failed(.cancelled):
+                return .failed(.cancelled)
+            case .failed(let error):
+                lastFailure = error
+            }
+        }
+
+        if let lastFailure { return .failed(lastFailure) }
+        if let declineReason { return .unsupported(reason: declineReason) }
+        if !sawCapability {
+            return .unsupported(reason: "Find references isn't available for this file.")
+        }
+        return .unsupported(reason: "No language provider returned references for this symbol.")
     }
 }
