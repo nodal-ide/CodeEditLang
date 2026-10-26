@@ -23,7 +23,9 @@ struct PHPReferencePosting: Sendable, Codable {
 /// maintained alongside the SymbolIndex in the project cache.
 ///
 /// The project indexer parses files concurrently, so every mutation and read of the
-/// postings here is guarded by `lock`.
+/// postings here is guarded by `lock`. The per-file reverse map doubles as the
+/// deduplication set, keeping add O(1) per (name, file) pair, and as the eviction
+/// guide so removing a file touches only the names that file actually posted.
 final class PHPReferenceIndex: @unchecked Sendable {
     private let lock = NSLock()
 
@@ -31,7 +33,8 @@ final class PHPReferenceIndex: @unchecked Sendable {
     private var postings: [String: [PHPReferencePosting]] = [:]
 
     /// Per-file reverse map: fileURL -> normalized names that reference it.
-    /// Used for eviction and for "name matches (receiver type unknown)" collapsed group.
+    /// Used for deduplication, targeted eviction, and the
+    /// "name matches (receiver type unknown)" collapsed group.
     private var fileNames: [String: Set<String>] = [:]
 
     /// Maximum number of postings per name to cap memory. Names exceeding this cap
@@ -46,44 +49,100 @@ final class PHPReferenceIndex: @unchecked Sendable {
         self.maxPostings = maxPostings
     }
 
+    /// Total stored postings across all names. Exposed for budget/regression tests.
+    var postingCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return postings.values.reduce(0) { $0 + $1.count }
+    }
+
     /// Insert a reference posting for a given name in a file.
-    /// Called by the project indexer after parsing a file.
+    /// Called by the project indexer after parsing a file. Re-adding a (name, file)
+    /// pair that is already indexed is a no-op.
     func addPosting(name: String, fileURL: URL, container: String? = nil, fullyQualifiedName: String? = nil) {
         let shortName = normalized(name: name)
         guard !shortName.isEmpty else { return }
-
-        let posting = PHPReferencePosting(
-            fileURL: fileURL.path(percentEncoded: false),
-            container: container,
-            fullyQualifiedName: fullyQualifiedName
-        )
+        let path = fileURL.path(percentEncoded: false)
 
         lock.lock()
         defer { lock.unlock() }
 
-        var existing = postings[shortName] ?? []
-        if !existing.contains(where: { $0.fileURL == posting.fileURL }) {
-            existing.append(posting)
-        }
+        if fileNames[path]?.contains(shortName) == true { return }
 
-        if existing.count > maxPostings {
-            postings[shortName] = Array(existing.prefix(maxPostings))
+        var existing = postings[shortName] ?? []
+        if existing.count >= maxPostings {
             isCompleteForName[shortName] = false
         } else {
+            existing.append(
+                PHPReferencePosting(
+                    fileURL: path,
+                    container: container,
+                    fullyQualifiedName: fullyQualifiedName
+                )
+            )
             postings[shortName] = existing
             isCompleteForName[shortName] = true
         }
 
-        fileNames[posting.fileURL, default: []].insert(shortName)
+        fileNames[path, default: []].insert(shortName)
+    }
+
+    /// Insert several reference postings for one file under a single lock acquisition.
+    /// This is the indexer's hot path: one call per parsed file instead of one per name.
+    func addPostings(names: [String], fileURL: URL, container: String? = nil, fullyQualifiedName: String? = nil) {
+        guard !names.isEmpty else { return }
+        let path = fileURL.path(percentEncoded: false)
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        var fileSet = fileNames[path] ?? []
+        var changed = false
+        for raw in names {
+            let shortName = normalized(name: raw)
+            guard !shortName.isEmpty, !fileSet.contains(shortName) else { continue }
+
+            var existing = postings[shortName] ?? []
+            if existing.count >= maxPostings {
+                isCompleteForName[shortName] = false
+            } else {
+                existing.append(
+                    PHPReferencePosting(
+                        fileURL: path,
+                        container: container,
+                        fullyQualifiedName: fullyQualifiedName
+                    )
+                )
+                postings[shortName] = existing
+                isCompleteForName[shortName] = true
+            }
+
+            fileSet.insert(shortName)
+            changed = true
+        }
+        if changed || fileNames[path] == nil {
+            fileNames[path] = fileSet
+        }
     }
 
     /// Remove all postings for a file (called when a file is deleted or re-indexed).
+    /// Only the names this file posted are touched, so cost scales with the file, not the project.
     func removeFile(_ fileURL: URL) {
         let path = fileURL.path(percentEncoded: false)
         lock.lock()
         defer { lock.unlock() }
-        postings = postings.mapValues { $0.filter { $0.fileURL != path } }
-        fileNames.removeValue(forKey: path)
+
+        guard let names = fileNames.removeValue(forKey: path) else { return }
+        for shortName in names {
+            guard var list = postings[shortName] else { continue }
+            list.removeAll { $0.fileURL == path }
+            if list.isEmpty {
+                postings.removeValue(forKey: shortName)
+                isCompleteForName.removeValue(forKey: shortName)
+            } else {
+                postings[shortName] = list
+            }
+        }
     }
 
     /// Look up the candidate files that reference the given short name.

@@ -478,7 +478,7 @@ private struct PHPScanner {
             symbols: symbols,
             variables: variableNames.sorted(),
             scopes: scopes,
-            referenceNames: referencedNames,  // Added for find-references name index
+            referenceNames: referencedNames,
             classTraits: classTraits,
             parseErrors: parseErrors,
             classReferences: classReferences,

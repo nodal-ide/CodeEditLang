@@ -9,11 +9,14 @@ import CodeEditLang
 /// Also maintains a `PHPReferenceIndex` that powers fast find-references queries.
 public final class PHPProjectIndexer: @unchecked Sendable {
     private let index: SymbolIndex
-    private let referenceIndex: PHPReferenceIndex
+    /// The reference name index maintained alongside ``symbolIndex``. Read-only for the query
+    /// engine (RF4); all writes go through this indexer so the two indexes stay in sync.
+    let referenceIndex: PHPReferenceIndex
     private let ignoredRelativePaths: Set<String>
     private let stateLock = NSLock()
     private var modTimes: [URL: Date] = [:]
     private var diagnosticsByFile: [URL: [PHPDiagnostic]] = [:]
+    private var referenceNamesByFile: [URL: [String]] = [:]
 
     public init(
         index: SymbolIndex = SymbolIndex(),
@@ -27,7 +30,8 @@ public final class PHPProjectIndexer: @unchecked Sendable {
     /// The shared symbol table the indexer writes into.
     public var symbolIndex: SymbolIndex { index }
 
-    /// The reference index that powers find-references candidate resolution.
+    /// When set, code-quality diagnostics are computed for every indexed file and delivered to
+    /// ``onDiagnostics`` (on a background thread).
     public var diagnosticsConfig: PHPDiagnosticsConfig?
 
     /// Called with each file's diagnostics during indexing. Invoked off the main thread.
@@ -43,15 +47,18 @@ public final class PHPProjectIndexer: @unchecked Sendable {
             for entry in cache.files {
                 let url = URL(fileURLWithPath: entry.path)
                 index.add(entry.symbols)
+                referenceIndex.addPostings(names: entry.referenceNames, fileURL: url)
                 stateLock.lock()
                 modTimes[url] = entry.modified
                 diagnosticsByFile[url] = entry.diagnostics
+                referenceNamesByFile[url] = entry.referenceNames
                 stateLock.unlock()
                 onDiagnostics?(url, entry.diagnostics)
             }
         }
 
         let files = phpFiles(at: root)
+        evictDeletedFiles(notIn: files)
         guard !files.isEmpty else { return }
         // Keep concurrency modest so indexing doesn't starve the UI while it runs in the
         // background (it starts when the first PHP file is opened).
@@ -83,31 +90,20 @@ public final class PHPProjectIndexer: @unchecked Sendable {
         onProgress?(total, total)
     }
 
-    /// Rebuild reference postings from a cached FileEntry's symbols.
-    private func rebuildReferencePostings(from symbols: PHPFileSymbols, for fileURL: URL) {
-        // Derive reference names from the symbol table.
-        // We look at: classReferences, functionCalls, thisMethodCalls, imports (aliases),
-        // symbols (names, kinds), and scope information.
-        let names = deriveReferenceNames(from: symbols, fileURL: fileURL)
-        for name in names {
-            referenceIndex.addPosting(name: name, fileURL: fileURL)
-        }
-    }
-
     /// Persists the index + diagnostics + reference postings for the scanned files.
     private func saveCache(for root: URL, files: [URL]) {
         let entries = files.map { file -> PHPProjectCache.FileEntry in
             stateLock.lock()
             let mtime = modTimes[file] ?? .distantPast
             let diagnostics = diagnosticsByFile[file] ?? []
-            // Store empty referenceNames for now; they'll be populated on the next buildIndex(at:)
+            let referenceNames = referenceNamesByFile[file] ?? []
             stateLock.unlock()
             return PHPProjectCache.FileEntry(
                 path: file.path(percentEncoded: false),
                 modified: mtime,
                 symbols: index.symbols(inFile: file),
                 diagnostics: diagnostics,
-                referenceNames: []
+                referenceNames: referenceNames
             )
         }
         PHPProjectCache.save(entries, for: root)
@@ -120,25 +116,34 @@ public final class PHPProjectIndexer: @unchecked Sendable {
 
     /// Derive reference names from a parsed PHP file symbols.
     internal func deriveReferenceNames(from symbols: PHPFileSymbols, fileURL: URL) -> [String] {
-        var names: [String] = []
-        // Add reference names from the parsed file symbols
+        var names = Set<String>(symbols.referenceNames)
         for importRef in symbols.imports {
-            names.append(importRef.name)
+            names.insert(importRef.name)
         }
         for call in symbols.functionCalls {
-            names.append(call.name)
+            names.insert(call.name)
         }
         for method in symbols.thisMethodCalls {
-            names.append(method.name)
+            names.insert(method.name)
         }
         for cref in symbols.classReferences {
-            names.append(cref.name)
+            names.insert(cref.name)
         }
-        // Add symbol names from the symbol table
         for symbol in symbols.symbols {
-            names.append(symbol.name)
+            names.insert(symbol.name)
         }
-        return names
+        return Array(names)
+    }
+
+    /// Removes a file from both indexes and its cached bookkeeping. Call on delete.
+    public func removeFile(_ file: URL) {
+        index.removeFile(file)
+        referenceIndex.removeFile(file)
+        stateLock.lock()
+        modTimes.removeValue(forKey: file)
+        diagnosticsByFile.removeValue(forKey: file)
+        referenceNamesByFile.removeValue(forKey: file)
+        stateLock.unlock()
     }
 
     /// Clears cached modification times so the next ``buildIndex(at:)`` re-parses (and re-diagnoses) every file.
@@ -153,17 +158,37 @@ public final class PHPProjectIndexer: @unchecked Sendable {
         index.removeFile(file)
         index.add(symbols)
         referenceIndex.removeFile(file)
+        stateLock.lock()
+        referenceNamesByFile.removeValue(forKey: file)
+        stateLock.unlock()
     }
 
     /// Replaces a file's symbols and rebuilds its reference postings from a full parse result.
     public func replace(file: URL, with info: PHPFileSymbols) {
-        replace(file: file, with: info.symbols)
-        for name in deriveReferenceNames(from: info, fileURL: file) {
-            referenceIndex.addPosting(name: name, fileURL: file)
-        }
+        index.removeFile(file)
+        index.add(info.symbols)
+        let names = deriveReferenceNames(from: info, fileURL: file)
+        referenceIndex.removeFile(file)
+        referenceIndex.addPostings(names: names, fileURL: file)
+        stateLock.lock()
+        referenceNamesByFile[file] = names
+        stateLock.unlock()
     }
 
     // MARK: - Private
+
+    /// Drops tracked files that no longer exist in the current scan from both indexes, so
+    /// deleting a file clears its symbols and reference postings on the next build.
+    private func evictDeletedFiles(notIn files: [URL]) {
+        let current = Set(files.map { $0.path(percentEncoded: false) })
+        stateLock.lock()
+        let stale = referenceNamesByFile.keys
+            .filter { !current.contains($0.path(percentEncoded: false)) }
+        stateLock.unlock()
+        for url in stale {
+            removeFile(url)
+        }
+    }
 
     private func indexFile(_ file: URL, force: Bool = false) {
         let mtime = (try? file.resourceValues(forKeys: [.contentModificationDateKey])
@@ -181,15 +206,13 @@ public final class PHPProjectIndexer: @unchecked Sendable {
         let parsed = PHPFileParser.parse(source, fileURL: file)
         index.removeFile(file)
         index.add(parsed.symbols)
+        let names = deriveReferenceNames(from: parsed, fileURL: file)
+        referenceIndex.removeFile(file)
+        referenceIndex.addPostings(names: names, fileURL: file)
         stateLock.lock()
         modTimes[file] = mtime
+        referenceNamesByFile[file] = names
         stateLock.unlock()
-
-        // Add reference postings from this file's symbols
-        let names = deriveReferenceNames(from: parsed, fileURL: file)
-        for name in names {
-            referenceIndex.addPosting(name: name, fileURL: file)
-        }
 
         // Code-quality diagnostics (skip very large files to bound work).
         var issues: [PHPDiagnostic] = []
@@ -206,8 +229,6 @@ public final class PHPProjectIndexer: @unchecked Sendable {
         stateLock.unlock()
         onDiagnostics?(file, issues)
     }
-
-    // Removed - replaced by deriveReferenceNames(from:PHPFileSymbols:) below
 
     private func phpFiles(at root: URL) -> [URL] {
         var files: [URL] = []
