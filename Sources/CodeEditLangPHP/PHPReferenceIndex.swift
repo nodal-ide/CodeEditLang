@@ -150,6 +150,8 @@ public final class PHPReferenceIndex: @unchecked Sendable {
 
     /// Look up the candidate files that reference the given short name.
     /// - Returns: (postings, isComplete) where postings are capped at maxPostings.
+    /// `isComplete` is derived from this index's cap state for the name; the query engine promotes
+    /// it to a result-level completeness flag together with whether any candidates were found.
     public func lookUp(_ name: String) -> LookupResult {
         let shortName = normalized(name: name)
         lock.lock()
