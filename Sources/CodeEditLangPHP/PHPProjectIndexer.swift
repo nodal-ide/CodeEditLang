@@ -251,8 +251,11 @@ public final class PHPProjectIndexer: @unchecked Sendable {
     }
 
     private func isIgnored(_ fileURL: URL, relativeTo root: URL) -> Bool {
-        let relative = fileURL.path(percentEncoded: false)
-            .replacingOccurrences(of: root.path(percentEncoded: false), with: "")
+        // Resolve symlinks so /var and /private/var compare equal.
+        let fileResolved = fileURL.resolvingSymlinksInPath().path(percentEncoded: false)
+        let rootResolved = root.resolvingSymlinksInPath().path(percentEncoded: false)
+        guard fileResolved.hasPrefix(rootResolved) else { return false }
+        var relative = String(fileResolved.dropFirst(rootResolved.count))
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         for ignored in ignoredRelativePaths {
             if relative == ignored || relative.hasPrefix(ignored + "/") {

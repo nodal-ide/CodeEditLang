@@ -165,7 +165,7 @@ final class PHPReferenceIndex: @unchecked Sendable {
 
     /// Normalize a name for indexing: lowercased, backslashes removed.
     private func normalized(name: String) -> String {
-        var result = name.lowercased()
+        var result = name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         while result.hasPrefix("\\") {
             result.removeFirst()
         }
