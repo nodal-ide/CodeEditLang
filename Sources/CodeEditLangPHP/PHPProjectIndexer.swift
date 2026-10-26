@@ -11,7 +11,7 @@ public final class PHPProjectIndexer: @unchecked Sendable {
     private let index: SymbolIndex
     /// The reference name index maintained alongside ``symbolIndex``. Read-only for the query
     /// engine (RF4); all writes go through this indexer so the two indexes stay in sync.
-    let referenceIndex: PHPReferenceIndex
+    public let referenceIndex: PHPReferenceIndex
     private let ignoredRelativePaths: Set<String>
     private let stateLock = NSLock()
     private var modTimes: [URL: Date] = [:]
@@ -47,7 +47,7 @@ public final class PHPProjectIndexer: @unchecked Sendable {
             for entry in cache.files {
                 let url = URL(fileURLWithPath: entry.path)
                 index.add(entry.symbols)
-                referenceIndex.addPostings(names: entry.referenceNames, fileURL: url)
+                referenceIndex.addPostings(names: entry.referenceNames, fileURL: url, fullyQualifiedName: nil)
                 stateLock.lock()
                 modTimes[url] = entry.modified
                 diagnosticsByFile[url] = entry.diagnostics
@@ -96,14 +96,22 @@ public final class PHPProjectIndexer: @unchecked Sendable {
             stateLock.lock()
             let mtime = modTimes[file] ?? .distantPast
             let diagnostics = diagnosticsByFile[file] ?? []
-            let referenceNames = referenceNamesByFile[file] ?? []
+            let names = referenceNamesByFile[file] ?? []
             stateLock.unlock()
+            let isComplete: Bool
+            if names.isEmpty {
+                isComplete = true
+            } else {
+                let (_, complete) = referenceIndex.lookUp(names.first!)
+                isComplete = complete
+            }
             return PHPProjectCache.FileEntry(
                 path: file.path(percentEncoded: false),
                 modified: mtime,
                 symbols: index.symbols(inFile: file),
                 diagnostics: diagnostics,
-                referenceNames: referenceNames
+                referenceNames: names,
+                referenceIndexComplete: isComplete
             )
         }
         PHPProjectCache.save(entries, for: root)

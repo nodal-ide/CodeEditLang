@@ -1,17 +1,8 @@
-//////
-//  PHPReferenceIndex.swift
-//  CodeEditLangPHP
-////
-//  Interned inverted index for find-references: name -> [file postings].
-//  Built as a by-product of the PHP project indexer; persists alongside the symbol cache.
-//  Provides bounded candidate files for the reference engine without re-parsing the entire project.
-//
-
 import Foundation
 import CodeEditLang
 
 /// A single file posting in the reference index.
-struct PHPReferencePosting: Sendable, Codable {
+public struct PHPReferencePosting: Sendable, Codable {
     let fileURL: String          // path(percentEncoded: false) of the file
     let container: String?       // enclosing type / function, or nil
     let fullyQualifiedName: String?  // e.g. "App\Models\User::charge"
@@ -26,7 +17,16 @@ struct PHPReferencePosting: Sendable, Codable {
 /// postings here is guarded by `lock`. The per-file reverse map doubles as the
 /// deduplication set, keeping add O(1) per (name, file) pair, and as the eviction
 /// guide so removing a file touches only the names that file actually posted.
-final class PHPReferenceIndex: @unchecked Sendable {
+public final class PHPReferenceIndex: @unchecked Sendable {
+    /// Opaque lookup result so the public API surface stays stable even if the internal
+    /// posting representation changes. Callers inspect `postings` and `isComplete`.
+    public typealias LookupResult = (postings: [PHPReferencePosting], isComplete: Bool)
+
+    /// The indexer hands out a stable reference to the index so consumers can read postings
+    /// without triggering a rebuild. This is not a copy — mutations to the index are still
+    /// reflected, but the caller must treat the reference as read-only.
+    public var referenceIndex: PHPReferenceIndex { self }
+
     private let lock = NSLock()
 
     /// Normalized short name (lowercased, unbackslashed) -> postings.
@@ -45,12 +45,15 @@ final class PHPReferenceIndex: @unchecked Sendable {
     /// The reference engine reports the overall result set is incomplete.
     private var isCompleteForName: [String: Bool] = [:]
 
-    init(maxPostings: Int = 500) {
+    public init(maxPostings: Int = 500) {
         self.maxPostings = maxPostings
     }
 
+    /// Opaque lookup result so the public API surface stays stable even if the internal
+    /// posting representation changes. Callers inspect `postings` and `isComplete`.
+    
     /// Total stored postings across all names. Exposed for budget/regression tests.
-    var postingCount: Int {
+    public var postingCount: Int {
         lock.lock()
         defer { lock.unlock() }
         return postings.values.reduce(0) { $0 + $1.count }
@@ -89,7 +92,7 @@ final class PHPReferenceIndex: @unchecked Sendable {
 
     /// Insert several reference postings for one file under a single lock acquisition.
     /// This is the indexer's hot path: one call per parsed file instead of one per name.
-    func addPostings(names: [String], fileURL: URL, container: String? = nil, fullyQualifiedName: String? = nil) {
+    public func addPostings(names: [String], fileURL: URL, container: String? = nil, fullyQualifiedName: String? = nil) {
         guard !names.isEmpty else { return }
         let path = fileURL.path(percentEncoded: false)
 
@@ -147,7 +150,7 @@ final class PHPReferenceIndex: @unchecked Sendable {
 
     /// Look up the candidate files that reference the given short name.
     /// - Returns: (postings, isComplete) where postings are capped at maxPostings.
-    func lookUp(_ name: String) -> ([PHPReferencePosting], isComplete: Bool) {
+    public func lookUp(_ name: String) -> LookupResult {
         let shortName = normalized(name: name)
         lock.lock()
         defer { lock.unlock() }
@@ -156,14 +159,19 @@ final class PHPReferenceIndex: @unchecked Sendable {
 
     /// Returns the set of short names referenced in a given file (for the collapsed
     /// "Name matches (receiver type unknown)" group).
-    func names(inFile fileURL: URL) -> Set<String> {
+    public func names(inFile fileURL: URL) -> Set<String> {
         let path = fileURL.path(percentEncoded: false)
         lock.lock()
         defer { lock.unlock() }
         return fileNames[path] ?? []
     }
 
-    /// Normalize a name for indexing: lowercased, backslashes removed.
+
+    /// Opaque lookup result so the public API surface stays stable even if the internal
+    /// posting representation changes. Callers inspect `postings` and `isComplete`.
+
+
+        /// Normalize a name for indexing: lowercased, backslashes removed.
     private func normalized(name: String) -> String {
         var result = name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         while result.hasPrefix("\\") {

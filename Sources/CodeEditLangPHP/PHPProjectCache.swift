@@ -21,7 +21,13 @@ struct PHPProjectCache: Codable {
         var modified: Date
         var symbols: [SymbolInfo]
         var diagnostics: [PHPDiagnostic]
+        /// The set of distinct names referenced in the file (functions, methods, classes, traits,
+        /// aliases) — replayed into the reference index on cache load so the name index survives
+        /// restarts without re-parsing.
         var referenceNames: [String]
+        /// Whether the reference index is complete for this file's names (when false, the reference
+        /// engine may report an incomplete result set for popular names).
+        var referenceIndexComplete: Bool
     }
 
     static func cacheURL(for root: URL) -> URL {

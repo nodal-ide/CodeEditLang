@@ -51,6 +51,7 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
 
     private let currentFileURL: URL
     private let index: SymbolIndex
+    private let referenceIndex: PHPReferenceIndex
     private let openLinkHandler: (JumpToDefinitionLink) -> Void
 
     /// Called with the file's diagnostics after each computation (for a problems panel).
@@ -64,13 +65,15 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
     private var lastItemsSignature: String?
     private var lastItems: [PHPCompletionItem] = []
 
-    public nonisolated init(
+    public init(
         fileURL: URL,
         index: SymbolIndex,
+        referenceIndex: PHPReferenceIndex,
         openLink: @escaping (JumpToDefinitionLink) -> Void
     ) {
         self.currentFileURL = fileURL
         self.index = index
+        self.referenceIndex = referenceIndex
         self.openLinkHandler = openLink
 
         // Warm the bundled stub index off the main thread so the first completion doesn't hitch.
@@ -506,6 +509,18 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
         var i = index
         while i < ns.length, ns.character(at: i) != 0x0A { i += 1 }
         return i < ns.length ? i + 1 : ns.length
+    }
+
+    // MARK: - ReferenceProviding
+
+    public var supportsReferences: Bool { true }
+
+    public func references(for query: ReferenceQuery) async -> ReferenceQueryOutcome {
+        await PHPReferenceEngine.references(
+            for: query,
+            index: index,
+            referenceIndex: referenceIndex
+        )
     }
 
     // MARK: - CodeSuggestionDelegate
