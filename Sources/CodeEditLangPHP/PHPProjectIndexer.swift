@@ -23,7 +23,7 @@ public final class PHPProjectIndexer: @unchecked Sendable {
         ignoredRelativePaths: Set<String> = [".git", "vendor", "node_modules"]
     ) {
         self.index = index
-        self.referenceIndex = PHPReferenceIndex()
+        self.referenceIndex = PHPReferenceIndex(maxPostings: 5000)
         self.ignoredRelativePaths = ignoredRelativePaths
     }
 

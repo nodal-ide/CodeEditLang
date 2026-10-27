@@ -7,9 +7,9 @@ import Foundation
 /// are honored.
 public struct ReferenceQuery: Sendable {
     /// Default number of rows kept per query. Providers may stop earlier; the aggregator enforces it.
-    public static let defaultMaxResults = 2_000
+    public static let defaultMaxResults = 5_000
     /// Default number of candidate files a native engine may parse for one query.
-    public static let defaultMaxCandidateFiles = 3_000
+    public static let defaultMaxCandidateFiles = 5_000
 
     public let target: ReferenceTarget
     /// The language of the zone the target lives in (e.g. `php`, `typescript`).
