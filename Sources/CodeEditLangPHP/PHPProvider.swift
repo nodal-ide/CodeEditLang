@@ -48,6 +48,9 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
 
     /// The built-in engine ranks above LSP but below user extensions.
     public var priority: LanguageProviderPriority { .internalLanguage }
+    /// Expose the native reference engine through the generic reference-providing API so editor code
+    /// can ask for references without special-casing PHP.
+    public var nativeReferenceEngine: (any ReferenceProviding)? { self }
 
     private let currentFileURL: URL
     private let index: SymbolIndex

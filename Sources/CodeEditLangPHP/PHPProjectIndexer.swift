@@ -98,20 +98,14 @@ public final class PHPProjectIndexer: @unchecked Sendable {
             let diagnostics = diagnosticsByFile[file] ?? []
             let names = referenceNamesByFile[file] ?? []
             stateLock.unlock()
-            let isComplete: Bool
-            if names.isEmpty {
-                isComplete = true
-            } else {
-                let (_, complete) = referenceIndex.lookUp(names.first!)
-                isComplete = complete
-            }
+            let postings = referenceIndex.postings(for: names, inFile: file)
             return PHPProjectCache.FileEntry(
                 path: file.path(percentEncoded: false),
                 modified: mtime,
                 symbols: index.symbols(inFile: file),
                 diagnostics: diagnostics,
                 referenceNames: names,
-                referenceIndexComplete: isComplete
+                postings: postings
             )
         }
         PHPProjectCache.save(entries, for: root)

@@ -8,16 +8,16 @@ final class PHPReferenceIndexTests: XCTestCase {
 
     func testAddAndLookUp() {
         let index = PHPReferenceIndex()
-        index.addPosting(name: "charge", fileURL: fileA)
+        index.addPostings(names: ["charge"], fileURL: fileA)
         let (postings, isComplete) = index.lookUp("charge")
         XCTAssertEqual(postings.count, 1)
         XCTAssertEqual(postings.first?.fileURL, fileA.path(percentEncoded: false))
-        XCTAssertTrue(isComplete)
+        XCTAssertTrue(isComplete, "idempotent add must preserve completeness")
     }
 
     func testLookUpNormalizesCaseAndLeadingBackslashes() {
         let index = PHPReferenceIndex()
-        index.addPosting(name: "\\App\\Models\\User", fileURL: fileA)
+        index.addPostings(names: ["\\App\\Models\\User"], fileURL: fileA)
         XCTAssertFalse(index.lookUp("app\\models\\user").0.isEmpty)
         XCTAssertFalse(index.lookUp("App\\Models\\User").0.isEmpty)
         XCTAssertTrue(index.lookUp("Other").0.isEmpty)
@@ -25,8 +25,8 @@ final class PHPReferenceIndexTests: XCTestCase {
 
     func testAddIsIdempotentPerFile() {
         let index = PHPReferenceIndex()
-        index.addPosting(name: "get", fileURL: fileA)
-        index.addPosting(name: "get", fileURL: fileA)
+        index.addPostings(names: ["get"], fileURL: fileA)
+        index.addPostings(names: ["get"], fileURL: fileA)
         XCTAssertEqual(index.lookUp("get").0.count, 1)
         XCTAssertEqual(index.postingCount, 1)
     }
@@ -86,15 +86,22 @@ final class PHPReferenceIndexTests: XCTestCase {
         let index = PHPReferenceIndex(maxPostings: 1)
         index.addPostings(names: ["get"], fileURL: fileA)
         index.addPostings(names: ["get"], fileURL: fileB)
-        XCTAssertFalse(index.lookUp("get").1)
+        XCTAssertFalse(index.lookUp("get").1, "two postings must exceed cap=1")
 
         index.removeFile(fileA)
         index.removeFile(fileB)
         XCTAssertTrue(index.lookUp("get").0.isEmpty)
 
+        // After both removes, `get` is empty; adding one posting restores completeness.
         index.addPostings(names: ["get"], fileURL: fileA)
         let (postings, isComplete) = index.lookUp("get")
         XCTAssertEqual(postings.count, 1)
-        XCTAssertTrue(isComplete)
+        XCTAssertTrue(isComplete, "single posting after eviction must restore completeness")
+
+        // Adding a second posting at cap=1 should truncate to one and mark incomplete.
+        index.addPostings(names: ["get"], fileURL: fileB)
+        let (postings2, isComplete2) = index.lookUp("get")
+        XCTAssertEqual(postings2.count, 1, "cap=1 must truncate second posting")
+        XCTAssertFalse(isComplete2, "two postings at cap=1 must be incomplete")
     }
 }
