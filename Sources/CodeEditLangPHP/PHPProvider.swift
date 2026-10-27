@@ -139,7 +139,7 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
             stubIndex: PHPStubIndex.shared()
         )
         guard let symbol = symbols.first else { return nil }
-        return HoverInfo(contents: PHPHoverMapper.content(for: symbol).plainText, range: range)
+        return HoverInfo(content: PHPHoverMapper.content(for: symbol), range: range)
     }
 
     // MARK: - SignatureHelpDelegate
