@@ -12,6 +12,8 @@ public struct PHPCompletionItem: CodeSuggestionEntry {
     public let documentation: String?
     public let image: Image
     public let imageColor: Color
+    /// Presentation kind; defaults to `.unknown`.
+    public let kind: CompletionItemKind
     /// Text inserted when accepted. Defaults to `label`.
     public let insertText: String
 
@@ -25,6 +27,7 @@ public struct PHPCompletionItem: CodeSuggestionEntry {
         detail: String? = nil,
         documentation: String? = nil,
         insertText: String? = nil,
+        kind: CompletionItemKind = .unknown,
         image: Image = Image(systemName: "text.alignleft"),
         imageColor: Color = Color(NSColor.systemGray)
     ) {
@@ -32,6 +35,7 @@ public struct PHPCompletionItem: CodeSuggestionEntry {
         self.detail = detail
         self.documentation = documentation
         self.insertText = insertText ?? label
+        self.kind = kind
         self.image = image
         self.imageColor = imageColor
     }
@@ -531,13 +535,38 @@ public final class PHPProvider: NativeLanguageProvider, LanguageProvider {
     @MainActor
     public func completionTriggerCharacters() -> Set<String> { ["\\", ">", ":"] }
 
+    public var supportsCompletionRefresh: Bool { true }
+
     @MainActor
     public func completionSuggestionsRequested(
         textView: TextViewController,
         cursorPosition: CursorPosition
     ) async -> (windowPosition: CursorPosition, items: [CodeSuggestionEntry])? {
+        guard let result = await completionResultRequested(
+            textView: textView,
+            cursorPosition: cursorPosition
+        ) else {
+            return nil
+        }
+        return (cursorPosition, result.items)
+    }
+
+    @MainActor
+    public func completionResultRequested(
+        textView: TextViewController,
+        cursorPosition: CursorPosition
+    ) async -> CompletionResult? {
         let items = await asyncItems(textView: textView, cursorPosition: cursorPosition)
-        return items.isEmpty ? nil : (cursorPosition, items)
+        return items.isEmpty ? nil : CompletionResult(items: items)
+    }
+
+    @MainActor
+    public func completionRefreshRequested(
+        textView: TextViewController,
+        cursorPosition: CursorPosition
+    ) async -> CompletionResult? {
+        let items = syncItems(textView: textView, cursorPosition: cursorPosition)
+        return items.isEmpty ? nil : CompletionResult(items: items)
     }
 
     @MainActor

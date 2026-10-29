@@ -34,19 +34,38 @@ public final class LanguageProviderAggregator: NSObject {
     /// The provider that produced the most recent jump-to-definition links.
     private var activeDefinitionProvider: (any LanguageProvider)?
 
-    public init(providers: [any LanguageProvider]) {
+    private let completionPolicy: CompletionMergePolicy
+    private let completionDeadline: Duration
+    private var completionInFlight: Set<ObjectIdentifier> = []
+    private var completionOwnerIDs: [ObjectIdentifier: String] = [:]
+    private var completionProvidersByOwner: [String: any LanguageProvider] = [:]
+
+    public init(
+        providers: [any LanguageProvider],
+        completionPolicy: CompletionMergePolicy = CompletionMergePolicy(),
+        completionDeadline: Duration = .milliseconds(400)
+    ) {
         var seen = Set<ObjectIdentifier>()
         let orderedProviders = providers
             .filter { seen.insert(ObjectIdentifier($0)).inserted }
             .sorted { $0.priority > $1.priority }
         self.providers = orderedProviders
+        self.completionPolicy = completionPolicy
+        self.completionDeadline = completionDeadline
         var providersByLanguage: [String: [any LanguageProvider]] = [:]
-        for provider in orderedProviders {
+        var ownerIDs: [ObjectIdentifier: String] = [:]
+        var providersByOwner: [String: any LanguageProvider] = [:]
+        for (index, provider) in orderedProviders.enumerated() {
+            let ownerID = "provider-\(index)"
+            ownerIDs[ObjectIdentifier(provider)] = ownerID
+            providersByOwner[ownerID] = provider
             for languageID in provider.supportedLanguageIDs {
                 providersByLanguage[languageID, default: []].append(provider)
             }
         }
         self.providersByLanguage = providersByLanguage
+        self.completionOwnerIDs = ownerIDs
+        self.completionProvidersByOwner = providersByOwner
         super.init()
     }
 
@@ -103,22 +122,102 @@ extension LanguageProviderAggregator: CodeSuggestionDelegate {
         providers.reduce(into: Set<String>()) { $0.formUnion($1.completionTriggerCharacters()) }
     }
 
+    public var supportsCompletionRefresh: Bool { true }
+
+    @MainActor
+    public func completionResultRequested(
+        textView: TextViewController,
+        cursorPosition: CursorPosition
+    ) async -> CompletionResult? {
+        await mergedCompletion(textView: textView, cursorPosition: cursorPosition)
+    }
+
+    @MainActor
+    public func completionRefreshRequested(
+        textView: TextViewController,
+        cursorPosition: CursorPosition
+    ) async -> CompletionResult? {
+        await mergedCompletion(textView: textView, cursorPosition: cursorPosition)
+    }
+
     @MainActor
     public func completionSuggestionsRequested(
         textView: TextViewController,
         cursorPosition: CursorPosition
     ) async -> (windowPosition: CursorPosition, items: [CodeSuggestionEntry])? {
-        for provider in providers(for: textView, at: cursorPosition.range.location) {
-            if let result = await provider.completionSuggestionsRequested(
-                textView: textView,
-                cursorPosition: cursorPosition
-            ), !result.items.isEmpty {
-                activeCompletionProvider = provider
-                return result
+        guard let result = await mergedCompletion(textView: textView, cursorPosition: cursorPosition) else {
+            return nil
+        }
+        return (cursorPosition, result.items)
+    }
+
+    /// Queries every routed provider concurrently (bounded by ``completionDeadline``) and merges the
+    /// results in tier order: built-in engine, language server, extensions by default.
+    @MainActor
+    private func mergedCompletion(
+        textView: TextViewController,
+        cursorPosition: CursorPosition
+    ) async -> CompletionResult? {
+        let routed = providers(for: textView, at: cursorPosition.range.location)
+        guard !routed.isEmpty else {
+            activeCompletionProvider = nil
+            return nil
+        }
+
+        var tasks: [Task<CompletionResult?, Never>] = []
+        tasks.reserveCapacity(routed.count)
+        for provider in routed {
+            tasks.append(Task { await self.queryCompletion(provider, textView: textView, position: cursorPosition) })
+        }
+
+        var groups: [CompletionMerge.Group] = []
+        groups.reserveCapacity(routed.count)
+        for (order, provider) in routed.enumerated() {
+            guard let result = await tasks[order].value, !result.items.isEmpty else { continue }
+            groups.append(CompletionMerge.Group(
+                tier: completionPolicy.tier(for: provider.priority),
+                order: order,
+                ownerID: completionOwnerIDs[ObjectIdentifier(provider)] ?? "provider",
+                items: result.items,
+                isIncomplete: result.isIncomplete
+            ))
+        }
+
+        guard let merged = CompletionMerge.merge(groups: groups) else {
+            activeCompletionProvider = nil
+            return nil
+        }
+        let ownerID = (merged.items.first as? AttributedCompletionEntry)?.ownerID
+        activeCompletionProvider = ownerID.flatMap { completionProvidersByOwner[$0] }
+        return CompletionResult(items: merged.items, isIncomplete: merged.isIncomplete)
+    }
+
+    @MainActor
+    private func queryCompletion(
+        _ provider: any LanguageProvider,
+        textView: TextViewController,
+        position: CursorPosition
+    ) async -> CompletionResult? {
+        let key = ObjectIdentifier(provider)
+        guard !completionInFlight.contains(key) else { return nil }
+        completionInFlight.insert(key)
+
+        let gate = CompletionResumeGate()
+        let deadline = completionDeadline
+        return await withCheckedContinuation { continuation in
+            Task { @MainActor in
+                let result = await provider.completionResultRequested(
+                    textView: textView,
+                    cursorPosition: position
+                )
+                completionInFlight.remove(key)
+                gate.resume(result, continuation)
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: deadline)
+                gate.resume(nil, continuation)
             }
         }
-        activeCompletionProvider = nil
-        return nil
     }
 
     @MainActor
@@ -148,8 +247,11 @@ extension LanguageProviderAggregator: CodeSuggestionDelegate {
         textView: TextViewController,
         cursorPosition: CursorPosition?
     ) {
-        activeCompletionProvider?.completionWindowApplyCompletion(
-            item: item,
+        let attributed = item as? AttributedCompletionEntry
+        let provider = attributed.flatMap { completionProvidersByOwner[$0.ownerID] }
+            ?? activeCompletionProvider
+        provider?.completionWindowApplyCompletion(
+            item: attributed?.base ?? item,
             textView: textView,
             cursorPosition: cursorPosition
         )
@@ -157,7 +259,30 @@ extension LanguageProviderAggregator: CodeSuggestionDelegate {
 
     @MainActor
     public func completionWindowDidSelect(item: CodeSuggestionEntry) {
-        activeCompletionProvider?.completionWindowDidSelect(item: item)
+        let attributed = item as? AttributedCompletionEntry
+        let provider = attributed.flatMap { completionProvidersByOwner[$0.ownerID] }
+            ?? activeCompletionProvider
+        provider?.completionWindowDidSelect(item: attributed?.base ?? item)
+    }
+}
+
+/// Resumes a completion race exactly once.
+private final class CompletionResumeGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resumed = false
+
+    func resume(
+        _ value: CompletionResult?,
+        _ continuation: CheckedContinuation<CompletionResult?, Never>
+    ) {
+        lock.lock()
+        if resumed {
+            lock.unlock()
+            return
+        }
+        resumed = true
+        lock.unlock()
+        continuation.resume(returning: value)
     }
 }
 

@@ -3,6 +3,7 @@ import AppKit
 import SwiftUI
 import os
 import CodeEditLang
+import CodeEditSourceEditor
 
 /// Builds context-aware PHP completion items for a cursor position.
 ///
@@ -172,6 +173,7 @@ public enum PHPCompletionEngine {
                 detail: member.fullyQualifiedName,
                 documentation: member.documentation,
                 insertText: member.kind == .method ? "\(member.name)()" : member.name,
+                kind: Self.completionKind(for: member.kind),
                 image: Self.image(for: member.kind),
                 imageColor: Self.imageColor(for: member.kind)
             )
@@ -326,6 +328,7 @@ public enum PHPCompletionEngine {
                     label: variable,
                     detail: "variable",
                     insertText: "$\(variable)",
+                    kind: .variable,
                     image: Self.image(for: .variable),
                     imageColor: Self.imageColor(for: .variable)
                 )
@@ -342,6 +345,7 @@ public enum PHPCompletionEngine {
                 PHPCompletionItem(
                     label: alias,
                     detail: fqn,
+                    kind: .classType,
                     image: Self.image(for: .class),
                     imageColor: Self.imageColor(for: .class)
                 )
@@ -363,7 +367,7 @@ public enum PHPCompletionEngine {
         }
 
         for keyword in keywords where prefix.isEmpty || keyword.lowercased().hasPrefix(prefix.lowercased()) {
-            append(PHPCompletionItem(label: keyword, detail: "keyword"))
+            append(PHPCompletionItem(label: keyword, detail: "keyword", kind: .keyword))
         }
 
         // Bundled stubs (built-in functions/classes/constants) — lowest priority.
@@ -381,9 +385,24 @@ public enum PHPCompletionEngine {
             label: symbol.name,
             detail: symbol.fullyQualifiedName,
             documentation: symbol.documentation,
+            kind: Self.completionKind(for: symbol.kind),
             image: Self.image(for: symbol.kind),
             imageColor: Self.imageColor(for: symbol.kind)
         )
+    }
+
+    private static func completionKind(for kind: SymbolKind) -> CompletionItemKind {
+        switch kind {
+        case .class: return .classType
+        case .trait, .interface: return .interface
+        case .enum: return .enumType
+        case .function: return .function
+        case .method: return .method
+        case .property: return .property
+        case .constant: return .constant
+        case .variable: return .variable
+        case .namespace: return .module
+        }
     }
 
     // MARK: - Variable type inference
