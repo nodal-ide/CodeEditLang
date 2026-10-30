@@ -56,6 +56,12 @@ func runInit(_ args: [String]) {
     let identifier = options["id"] ?? "com.example.\(directoryName.lowercased())"
     let name = options["name"] ?? directoryName
     let language = options["language"] ?? "php"
+    let type = options["type"] ?? "languagePack"
+
+    if type == "theme" {
+        initTheme(directory: directory, name: name, identifier: identifier)
+        return
+    }
 
     do {
         let fileManager = FileManager.default
@@ -207,16 +213,16 @@ func fail(_ message: String) -> Never {
 func printUsage() {
     print(
         """
-        codeedit-ext — author CodeEdit language extensions
+        codeedit-ext — author CodeEdit extensions
 
         USAGE:
-          codeedit-ext init <dir> [--id <id>] [--name <name>] [--language <lang>]
+          codeedit-ext init <dir> [--id <id>] [--name <name>] [--language <lang>] [--type theme]
           codeedit-ext validate <dir>
           codeedit-ext pack <dir> [--output <file.zip>]
           codeedit-ext schema
 
         COMMANDS:
-          init       Scaffold a new language extension.
+          init       Scaffold a new language extension (or a theme pack with --type theme).
           validate   Validate extension.json and its symbol files.
                      Pass --allow-native-grammars to structurally validate a native syntax pack.
           pack       Zip an extension for installation.
