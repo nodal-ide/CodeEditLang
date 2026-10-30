@@ -96,6 +96,7 @@ public struct LanguageExtensionManifest: Codable {
         public var stubRoots: [String]?
         public var provider: Provider?
         public var knowledge: [Knowledge]?
+        public var themes: [Theme]?
 
         public init(
             syntax: [Syntax]? = nil,
@@ -103,7 +104,8 @@ public struct LanguageExtensionManifest: Codable {
             snippets: [String]? = nil,
             stubRoots: [String]? = nil,
             provider: Provider? = nil,
-            knowledge: [Knowledge]? = nil
+            knowledge: [Knowledge]? = nil,
+            themes: [Theme]? = nil
         ) {
             self.syntax = syntax
             self.symbols = symbols
@@ -111,6 +113,7 @@ public struct LanguageExtensionManifest: Codable {
             self.stubRoots = stubRoots
             self.provider = provider
             self.knowledge = knowledge
+            self.themes = themes
         }
 
         /// A declarative syntax contribution: queries plus either a built-in grammar reference or a
@@ -232,6 +235,19 @@ public struct LanguageExtensionManifest: Codable {
                     if let parent { result.append(("parent", parent)) }
                     return result
                 }
+            }
+        }
+
+        /// A theme document contributed by the pack.
+        public struct Theme: Codable {
+            /// Stable id, unique inside the pack. The host qualifies it with the pack id.
+            public var id: String
+            /// Theme file path, relative to the pack root.
+            public var path: String
+
+            public init(id: String, path: String) {
+                self.id = id
+                self.path = path
             }
         }
 

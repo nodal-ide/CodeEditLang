@@ -134,6 +134,18 @@ public enum LanguageExtensionSchema {
                 "additionalProperties": true
               }
             },
+            "themes": {
+              "type": "array",
+              "description": "Theme documents (cetheme files) contributed to the app's theme list.",
+              "items": {
+                "type": "object",
+                "required": ["id", "path"],
+                "properties": {
+                  "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$", "description": "Stable theme id, unique inside the pack." },
+                  "path": { "type": "string", "description": "Theme file path relative to the pack root." }
+                }
+              }
+            },
             "symbols": { "type": "array", "items": { "type": "string" } },
             "snippets": { "type": "array", "items": { "type": "string" } },
             "stubRoots": { "type": "array", "items": { "type": "string" } },

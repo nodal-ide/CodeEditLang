@@ -138,8 +138,15 @@ public struct LanguageExtensionValidationContext: Sendable {
 /// loader, where the tree-sitter grammars are available.
 public enum LanguageExtensionValidator {
     private static let knownCapabilities: Set<String> = [
-        "syntax", "nativeGrammars", "symbols", "provider", "snippets", "stubRoots", "knowledge"
+        "syntax", "nativeGrammars", "symbols", "provider", "snippets", "stubRoots", "knowledge",
+        "themes"
     ]
+
+    private static let knownTypes: Set<String> = [
+        "languagePack", "languageProvider", "nativeSyntaxPack", "settings", "sidebar", "theme", "action"
+    ]
+
+    private static let maximumThemeFileSize = ThemeDocumentValidator.maximumFileSize
 
     private static let supportedSchemaVersions = LanguageExtensionSchema.supportedVersions
 
@@ -182,7 +189,8 @@ public enum LanguageExtensionValidator {
         validateIdentity(manifest, context: context, into: &issues)
         validateCapabilities(manifest, into: &issues)
         let paths = PackPaths(root: root)
-        validateResources(manifest, paths: paths, into: &issues)
+        validateResources(manifest, paths: paths, context: context, into: &issues)
+        validateThemes(manifest.contributes?.themes ?? [], into: &issues)
         validateSyntax(manifest, paths: paths, context: context, into: &issues)
 
         return LanguageExtensionValidationResult(issues: issues)
@@ -237,6 +245,10 @@ public enum LanguageExtensionValidator {
                 ))
             }
         }
+
+        if let type = manifest.type, !knownTypes.contains(type) {
+            issues.append(.warning("Unknown extension `type` '\(type)'.", at: "type"))
+        }
     }
 
     private static func validateEngineRequirement(
@@ -290,6 +302,14 @@ public enum LanguageExtensionValidator {
                 ))
             }
         }
+
+        let themes = manifest.contributes?.themes ?? []
+        if !themes.isEmpty, !capabilities.contains("themes") {
+            issues.append(.warning(
+                "Contributes themes but `capabilities` does not list \"themes\".",
+                at: "capabilities"
+            ))
+        }
     }
 
     // MARK: Files
@@ -297,6 +317,7 @@ public enum LanguageExtensionValidator {
     private static func validateResources(
         _ manifest: LanguageExtensionManifest,
         paths: PackPaths,
+        context: LanguageExtensionValidationContext,
         into issues: inout [LanguageExtensionIssue]
     ) {
         if let icon = manifest.icon {
@@ -323,6 +344,10 @@ public enum LanguageExtensionValidator {
             validateKnowledge(knowledge, paths: paths, into: &issues)
         }
 
+        for theme in contributes?.themes ?? [] {
+            validateTheme(theme, paths: paths, scope: context.scope, into: &issues)
+        }
+
         if let provider = contributes?.provider {
             if provider.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 issues.append(.error("`contributes.provider.command` must not be empty.", at: "contributes.provider"))
@@ -344,16 +369,69 @@ public enum LanguageExtensionValidator {
         let hasProvider = contributes?.provider != nil
         let hasSymbols = !(contributes?.symbols ?? []).isEmpty
         let hasSyntax = !(contributes?.syntax ?? []).isEmpty
+        let hasThemes = !(contributes?.themes ?? []).isEmpty
+        let hasKnowledge = !(contributes?.knowledge ?? []).isEmpty
         if languages.isEmpty, hasSymbols || hasProvider {
             issues.append(.warning(
                 "No `languages` declared — symbol/provider contributions will never activate."
             ))
         }
-        if !hasSymbols && !hasProvider && !hasSyntax {
+        if !hasSymbols && !hasProvider && !hasSyntax && !hasThemes && !hasKnowledge {
             issues.append(.warning(
-                "No `contributes.symbols`, `contributes.provider` or `contributes.syntax` — the pack contributes nothing."
+                "No `contributes.symbols`, `contributes.provider`, `contributes.syntax`, "
+                    + "`contributes.themes` or `contributes.knowledge` — the pack contributes nothing."
             ))
         }
+    }
+
+    private static func validateTheme(
+        _ theme: LanguageExtensionManifest.Contributes.Theme,
+        paths: PackPaths,
+        scope: LanguageExtensionPackScope,
+        into issues: inout [LanguageExtensionIssue]
+    ) {
+        let location = "contributes.themes[\(theme.id)]"
+        if theme.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            issues.append(.error("Theme `id` must not be empty.", at: location))
+        } else if !isValidThemeID(theme.id) {
+            issues.append(.error(
+                "Theme `id` must contain only letters, digits, '.', '_' and '-': \(theme.id)",
+                at: "\(location).id"
+            ))
+        }
+        if scope != .global {
+            issues.append(.warning(
+                "Workspace-scoped packs cannot contribute selectable themes.",
+                at: location
+            ))
+        }
+        guard let url = validateFile(
+            theme.path, kind: "Theme file", required: true, severity: .error, paths: paths, into: &issues
+        ) else {
+            return
+        }
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        if size > maximumThemeFileSize {
+            issues.append(.error(
+                "Theme file is larger than \(maximumThemeFileSize) bytes: \(theme.path)",
+                at: theme.path
+            ))
+            return
+        }
+        let result = ThemeDocumentValidator.validate(fileAt: url)
+        for issue in result.issues {
+            issues.append(.init(severity: issue.severity, message: issue.message, location: theme.path))
+        }
+    }
+
+    private static func isValidThemeID(_ id: String) -> Bool {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        guard let first = id.unicodeScalars.first,
+              CharacterSet.alphanumerics.contains(first),
+              id.unicodeScalars.allSatisfy(allowed.contains) else {
+            return false
+        }
+        return true
     }
 
     private static func validateCompletionTriggers(
@@ -390,6 +468,18 @@ public enum LanguageExtensionValidator {
                     "Duplicate completion trigger '\(trigger)'.",
                     at: "contributes.provider.completionTriggers"
                 ))
+            }
+        }
+    }
+
+    private static func validateThemes(
+        _ themes: [LanguageExtensionManifest.Contributes.Theme],
+        into issues: inout [LanguageExtensionIssue]
+    ) {
+        var seen = Set<String>()
+        for theme in themes where !theme.id.isEmpty {
+            if !seen.insert(theme.id).inserted {
+                issues.append(.error("Duplicate theme `id` '\(theme.id)'.", at: "contributes.themes"))
             }
         }
     }
